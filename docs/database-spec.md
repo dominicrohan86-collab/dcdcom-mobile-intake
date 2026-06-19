@@ -21,7 +21,7 @@ This app is designed around a Cloudflare D1 database using SQLite-compatible SQL
 - Intake pipeline: `inquiries`, `inquiry_sources`, `ai_runs`, `extracted_fields`, `missing_requirements`, `ai_summaries`
 - Estimating and field work: `estimates`, `estimate_lines`, `site_visits`, `checklist_items`
 - Documents and proposals: `documents`, `document_versions`, `proposals`, `proposal_sections`
-- Communication and files: `communications`, `files`
+- Communication and files: `communications`, `communication_delivery_attempts`, `files`
 - Operations: `activity_events`, `integration_connections`, `sync_events`, `notification_rules`, `audit_log`
 
 ## Relationship Summary
@@ -33,6 +33,7 @@ This app is designed around a Cloudflare D1 database using SQLite-compatible SQL
 - Estimates and proposals are versioned separately so a proposal can reference the estimate used at send time.
 - Documents use `documents` plus `document_versions` to preserve generated and edited text.
 - Site visits own checklist items, which lets the app track field-readiness independent of proposal status.
+- Communications preserve inbound and outbound customer touchpoints; delivery attempts preserve provider queue/send/failure evidence.
 - Every meaningful workflow action can be logged in `activity_events`; durable compliance changes can be mirrored into `audit_log`.
 
 ## API Surface
@@ -44,8 +45,12 @@ The Worker now routes `/api/*` before static assets:
 - `GET /api/inquiries?status=&search=` lists filtered inquiries.
 - `POST /api/inquiries` creates a normalized company/contact/site/inquiry/source record set.
 - `POST /api/ai/intake-preview` runs OpenAI structured extraction, or deterministic fallback when `OPENAI_API_KEY` is absent.
+- `POST /api/intake/inbound` accepts external email, SMS, call-transcript, or web-form intake and creates an AI-extracted opportunity.
 - `POST /api/inquiries/from-source` runs extraction and persists the normalized inquiry, source, fields, missing requirements, summary, AI run, and activity event.
 - `POST /api/inquiries/:id/generate` creates database-backed follow-up emails, scope documents, site checklists, estimates, and proposals from inquiry context.
+- `POST /api/inquiries/:id/documents` saves manually edited drafts as versioned documents.
+- `GET/POST /api/inquiries/:id/communications` lists or logs customer communications.
+- `POST /api/inquiries/:id/send-follow-up` saves the email draft version and queues/sends outbound provider delivery.
 - `GET /api/inquiries/:id/files` lists file metadata attached to the inquiry.
 - `POST /api/inquiries/:id/files` stores the file body in R2 and searchable metadata in D1.
 - `GET /api/files/:id` streams an authorized file from R2.
@@ -57,7 +62,7 @@ The Worker now routes `/api/*` before static assets:
 - `GET /api/inquiries/:id` returns one inquiry with extracted fields, missing requirements, AI summaries, activity, and documents.
 - `POST /api/inquiries/:id/activity` appends an activity event.
 
-The mobile UI still uses its local mock state today, but the database and API are ready for replacing that state with API calls incrementally.
+The mobile UI hydrates queue/detail data from the Worker when the local or hosted API is available, then falls back to local mock data when the Worker is unavailable.
 
 ## Table Catalog
 
@@ -84,6 +89,7 @@ The mobile UI still uses its local mock state today, but the database and API ar
 | `proposals` | Proposal lifecycle and price range linked to estimates/documents. |
 | `proposal_sections` | Editable proposal sections such as scope, assumptions, deliverables, and terms. |
 | `communications` | Inbound and outbound customer communication records. |
+| `communication_delivery_attempts` | Provider queue/send/failure attempts for outbound communication delivery. |
 | `files` | Uploaded photos, floor plans, equipment lists, contracts, and attachments. |
 | `activity_events` | Timeline events used by the mobile app activity feed. |
 | `integration_connections` | CRM, email, calendar, storage, and other integration connection state. |
@@ -93,12 +99,13 @@ The mobile UI still uses its local mock state today, but the database and API ar
 
 ## Intake Lifecycle Covered
 
-1. A call, email, text, manual note, photo/OCR result, or web form creates an `inquiry` plus an `inquiry_sources` row.
+1. A call, email, text, manual note, photo/OCR result, or web form creates an `inquiry`, an `inquiry_sources` row, and an inbound `communications` row.
 2. AI extraction stores the model execution in `ai_runs`, normalized data in `extracted_fields`, open questions in `missing_requirements`, and the plain-language explanation in `ai_summaries`.
 3. Photos, floor plans, equipment lists, contracts, and attachments are stored in R2 under account/inquiry scoped keys, while `files` keeps searchable metadata and authorization context.
 4. The app can create a follow-up email, site visit checklist, estimate, proposal, and related document versions without losing the original raw customer text. Generated artifacts are stored in `documents`, `document_versions`, `estimates`, `estimate_lines`, `site_visits`, `checklist_items`, `proposals`, and `proposal_sections` as appropriate.
-5. Server-side write endpoints check workspace user roles before mutation. Estimators, project managers, sales users, and admins can perform normal workflow writes; integration connection is limited to admins and project managers.
-6. Every user action can be appended to `activity_events`; sensitive or compliance-relevant edits can also be mirrored into `audit_log`.
+5. Follow-up emails can be queued or sent through provider webhooks. Without a configured provider, the app records a queued communication and delivery-attempt reason instead of falsely marking it sent.
+6. Server-side write endpoints check workspace user roles before mutation. Estimators, project managers, sales users, and admins can perform normal workflow writes; integration connection is limited to admins and project managers.
+7. Every user action can be appended to `activity_events`; sensitive or compliance-relevant edits can also be mirrored into `audit_log`.
 
 ## Required Indexes
 
@@ -111,6 +118,7 @@ The migration includes indexes for:
 - Extracted field lookup by inquiry and key.
 - Documents by inquiry/type/status.
 - Activity and communication timelines.
+- Delivery attempts by communication.
 - File lookup by inquiry/category.
 - Audit lookup by entity.
 
@@ -128,7 +136,8 @@ The migration includes indexes for:
 - `DB` maps to a local SQLite database at `.local/dcdcom.sqlite`.
 - `FILES` maps to file objects under `.local/r2`.
 - `OPENAI_API_KEY` and `OPENAI_MODEL` are read from the shell environment if present.
+- `EMAIL_PROVIDER_WEBHOOK`, `SMS_PROVIDER_WEBHOOK`, and `COMMUNICATION_PROVIDER_WEBHOOK` are optional provider adapter URLs for outbound delivery.
 
-`npm run test:api` exercises the same API handler against this local runtime and covers the core customer flow from intake through generated proposal, file upload/download, settings, integration sync, and workflow status update.
+`npm run test:api` exercises the same API handler against this local runtime and covers the core customer flow from inbound intake through generated proposal, document versioning, queued follow-up delivery, communication timeline readback, file upload/download, settings, integration sync, and workflow status update.
 
 `npm run readiness` calls `/api/readiness` through the local runtime and prints blocking checks and warning-only checks. In local development, a missing `OPENAI_API_KEY` is warning-only because deterministic fallback AI remains available. In production, configure the OpenAI key before customer use.

@@ -1054,6 +1054,70 @@ button:disabled {
   text-decoration: none;
 }
 
+.comm-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.comm-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 9px;
+  min-height: 48px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+
+.comm-row > span {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--blue);
+  background: #edf4ff;
+}
+
+.comm-row.outbound > span {
+  color: #08722f;
+  background: #e7f6eb;
+}
+
+.comm-row div {
+  min-width: 0;
+}
+
+.comm-row b,
+.comm-row em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comm-row b {
+  font-size: 13px;
+}
+
+.comm-row em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.comm-row strong {
+  border-radius: 999px;
+  background: #f1f3f6;
+  color: #4d596c;
+  font-size: 11px;
+  padding: 4px 7px;
+  text-transform: capitalize;
+}
+
 .action-dock {
   margin-top: 12px;
   border-top: 1px solid var(--line);
@@ -1204,7 +1268,7 @@ button:disabled {
 }
 
 .bottom-actions .wide {
-  grid-column: span 1;
+  grid-column: 1 / -1;
 }
 
 .proposal-card {

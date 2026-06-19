@@ -10,7 +10,10 @@ export async function createLocalEnv(options = {}) {
     DB: new LocalD1(resolve(localRoot, "dcdcom.sqlite")),
     FILES: new LocalR2(resolve(localRoot, "r2")),
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
-    OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5.5"
+    OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5.5",
+    EMAIL_PROVIDER_WEBHOOK: process.env.EMAIL_PROVIDER_WEBHOOK || "",
+    SMS_PROVIDER_WEBHOOK: process.env.SMS_PROVIDER_WEBHOOK || "",
+    COMMUNICATION_PROVIDER_WEBHOOK: process.env.COMMUNICATION_PROVIDER_WEBHOOK || ""
   };
 }
 

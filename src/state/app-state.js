@@ -21,6 +21,7 @@ export const state = {
   aiActionLoading: "",
   generatedProducts: {},
   documentDrafts: {},
+  communications: {},
   uploadedFiles: {},
   pendingPhoto: null,
   fileUploading: false,

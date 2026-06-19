@@ -6,6 +6,7 @@ export function detailScreen({ state, selected }) {
   const missingRows = item.missingFull.map((m) => `<li class="todo"><span></span>${m}</li>`).join("");
   const capturedRows = item.captured.map(([k, v]) => `<li class="done"><span></span><b>${k}</b><em>${v}</em></li>`).join("");
   const files = state.uploadedFiles[item.id] || [];
+  const communications = state.communications[item.id] || [];
   const lease = item.captured.find(([key]) => key.toLowerCase().includes("lease"))?.[1] || "Missing";
   const totalInfo = item.missingFull.length + item.captured.length;
   const summary = state.expandedSummary
@@ -41,6 +42,16 @@ export function detailScreen({ state, selected }) {
       <div class="section-head tight"><h3>Files & Site Evidence</h3><button data-screen="add" data-tab-target="Photo">Add</button></div>
       ${files.length ? `<div class="attachment-list">${files.map((file) => `<a href="${file.url || "#"}" target="_blank" rel="noreferrer">${icon(file.category === "photo" ? "camera" : "file")}<span>${file.fileName}</span><em>${formatBytes(file.sizeBytes)}</em></a>`).join("")}</div>` : `<p class="empty-note">No photos, floor plans, or equipment files attached yet.</p>`}
     </section>
+    <section class="detail-section">
+      <div class="section-head tight"><h3>Communication Timeline</h3><button data-screen="email">Follow up</button></div>
+      ${communications.length ? `<div class="comm-list">${communications.slice(0, 4).map((comm) => `
+        <div class="comm-row ${comm.direction}">
+          <span>${icon(iconForChannel(comm.channel))}</span>
+          <div><b>${labelForCommunication(comm)}</b><em>${escapeHtml(comm.subject || truncate(comm.body, 64))}</em></div>
+          <strong>${escapeHtml(comm.status)}</strong>
+        </div>
+      `).join("")}</div>` : `<p class="empty-note">Inbound calls, emails, texts, and queued follow-ups will appear here.</p>`}
+    </section>
     <section class="action-dock">
       <h3>AI Actions</h3>
       <div class="action-grid">
@@ -53,6 +64,37 @@ export function detailScreen({ state, selected }) {
       ${state.savedNotice ? `<p class="notice">${state.savedNotice}</p>` : ""}
     </section>
   `, state, { back: true, actions: `<button class="link-btn" data-action="edit-details">Edit</button><button class="dots" data-action="more-actions" aria-label="More actions">${icon("more")}</button>` });
+}
+
+function iconForChannel(channel) {
+  if (channel === "email") return "mail";
+  if (channel === "phone") return "phone";
+  if (channel === "text") return "mail";
+  return "file";
+}
+
+function labelForCommunication(comm) {
+  const direction = comm.direction === "outbound" ? "Outbound" : "Inbound";
+  const channel = {
+    email: "Email",
+    phone: "Call",
+    text: "Text",
+    internal_note: "Note"
+  }[comm.channel] || "Communication";
+  return `${direction} ${channel}`;
+}
+
+function truncate(value, max) {
+  const text = String(value || "");
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function formatBytes(bytes) {

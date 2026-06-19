@@ -50,7 +50,7 @@ export async function getInquiryDetail(env, accountId, inquiryId) {
     WHERE i.account_id = ? AND i.id = ?
   `, [accountId, inquiryId]);
   if (!inquiry) return null;
-  const [fields, missing, summaries, activity, documents, files] = await Promise.all([
+  const [fields, missing, summaries, activity, documents, files, communications] = await Promise.all([
     all(env, "SELECT * FROM extracted_fields WHERE inquiry_id = ? ORDER BY field_key", [inquiryId]),
     all(env, "SELECT * FROM missing_requirements WHERE inquiry_id = ? ORDER BY severity DESC, category, label", [inquiryId]),
     all(env, "SELECT * FROM ai_summaries WHERE inquiry_id = ? ORDER BY generated_at DESC", [inquiryId]),
@@ -65,7 +65,8 @@ export async function getInquiryDetail(env, accountId, inquiryId) {
       WHERE d.inquiry_id = ?
       ORDER BY d.updated_at DESC
     `, [inquiryId]),
-    all(env, "SELECT id, file_name, content_type, size_bytes, category, uploaded_at FROM files WHERE inquiry_id = ? ORDER BY uploaded_at DESC", [inquiryId])
+    all(env, "SELECT id, file_name, content_type, size_bytes, category, uploaded_at FROM files WHERE inquiry_id = ? ORDER BY uploaded_at DESC", [inquiryId]),
+    listCommunications(env, accountId, inquiryId)
   ]);
   return {
     inquiry,
@@ -74,7 +75,8 @@ export async function getInquiryDetail(env, accountId, inquiryId) {
     summaries: summaries.results || [],
     activity: activity.results || [],
     documents: documents.results || [],
-    files: files.results || []
+    files: files.results || [],
+    communications
   };
 }
 
@@ -241,7 +243,11 @@ export async function createInquiry(env, accountId, userId, payload) {
     env.DB.prepare(`
       INSERT INTO inquiry_sources (id, inquiry_id, channel, subject, sender, raw_text, captured_by_user_id, captured_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(sourceId, id, payload.sourceChannel || "manual", payload.subject || null, payload.sender || null, payload.rawText || "", userId, now)
+    `).bind(sourceId, id, payload.sourceChannel || "manual", payload.subject || null, payload.sender || null, payload.rawText || "", userId, now),
+    env.DB.prepare(`
+      INSERT INTO communications (id, inquiry_id, contact_id, direction, channel, subject, body, status, external_message_id, created_by_user_id, occurred_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(`comm_${crypto.randomUUID()}`, id, contactId, "inbound", communicationChannel(payload.sourceChannel || "manual"), payload.subject || null, payload.rawText || "", "received", payload.externalMessageId || null, userId, now)
   ]);
 
   await createActivity(env, accountId, id, userId, "inquiry.created", `Created inquiry ${payload.title || company}`, { sourceId });
@@ -306,6 +312,10 @@ export async function createInquiryFromExtraction(env, accountId, userId, payloa
       INSERT INTO inquiry_sources (id, inquiry_id, channel, subject, sender, raw_text, captured_by_user_id, captured_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(sourceId, inquiryId, payload.sourceChannel || "manual", payload.subject || "AI intake source", payload.sender || extraction.contact.email || extraction.contact.phone || extraction.contact.fullName, payload.rawText, userId, now),
+    env.DB.prepare(`
+      INSERT INTO communications (id, inquiry_id, contact_id, direction, channel, subject, body, status, external_message_id, created_by_user_id, occurred_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(`comm_${crypto.randomUUID()}`, inquiryId, contactId, "inbound", communicationChannel(payload.sourceChannel || "manual"), payload.subject || "AI intake source", payload.rawText, "received", payload.externalMessageId || null, userId, now),
     env.DB.prepare(`
       INSERT INTO ai_summaries (id, inquiry_id, summary_type, body, model_name, confidence_score, generated_by_user_id, generated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -523,6 +533,196 @@ export async function saveDocumentDraft(env, accountId, inquiryId, userId, paylo
   };
 }
 
+export async function listCommunications(env, accountId, inquiryId) {
+  const result = await all(env, `
+    SELECT c.*
+    FROM communications c
+    INNER JOIN inquiries i ON i.id = c.inquiry_id
+    WHERE i.account_id = ? AND c.inquiry_id = ?
+    ORDER BY c.occurred_at DESC
+  `, [accountId, inquiryId]);
+  return result.results || [];
+}
+
+export async function logCommunication(env, accountId, inquiryId, userId, payload) {
+  const inquiry = await first(env, `
+    SELECT id, title, contact_id
+    FROM inquiries
+    WHERE account_id = ? AND id = ?
+    LIMIT 1
+  `, [accountId, inquiryId]);
+  if (!inquiry) return null;
+  const direction = payload.direction === "outbound" ? "outbound" : "inbound";
+  const channel = communicationChannel(payload.channel || "internal_note");
+  const status = payload.status || (direction === "inbound" ? "received" : "draft");
+  const now = new Date().toISOString();
+  const id = `comm_${crypto.randomUUID()}`;
+  await run(env, `
+    INSERT INTO communications (
+      id, inquiry_id, contact_id, direction, channel, subject, body, status,
+      external_message_id, created_by_user_id, occurred_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id,
+    inquiryId,
+    payload.contactId || inquiry.contact_id || null,
+    direction,
+    channel,
+    payload.subject || null,
+    payload.body || "",
+    status,
+    payload.externalMessageId || null,
+    userId,
+    payload.occurredAt || now
+  ]);
+  if (direction === "inbound") {
+    await run(env, "UPDATE inquiries SET last_customer_activity_at = ?, updated_at = ? WHERE id = ?", [payload.occurredAt || now, now, inquiryId]);
+  }
+  await createActivity(env, accountId, inquiryId, userId, `communication.${direction}`, `${direction === "outbound" ? "Prepared" : "Logged"} ${channelLabel(channel)} for ${inquiry.title}`, {
+    communicationId: id,
+    channel,
+    status
+  });
+  await createAuditLog(env, accountId, userId, "communication", id, "communication.logged", null, { inquiryId, direction, channel, status });
+  return {
+    id,
+    inquiry_id: inquiryId,
+    contact_id: payload.contactId || inquiry.contact_id || null,
+    direction,
+    channel,
+    subject: payload.subject || null,
+    body: payload.body || "",
+    status,
+    external_message_id: payload.externalMessageId || null,
+    created_by_user_id: userId,
+    occurred_at: payload.occurredAt || now
+  };
+}
+
+export async function sendOutboundCommunication(env, accountId, inquiryId, userId, payload) {
+  const inquiry = await first(env, `
+    SELECT i.id, i.title, i.contact_id, ct.email, ct.phone, ct.full_name
+    FROM inquiries i
+    LEFT JOIN contacts ct ON ct.id = i.contact_id
+    WHERE i.account_id = ? AND i.id = ?
+    LIMIT 1
+  `, [accountId, inquiryId]);
+  if (!inquiry) return null;
+  const channel = communicationChannel(payload.channel || "email");
+  const body = String(payload.body || "").trim();
+  const subject = payload.subject || (channel === "email" ? `Follow-up on ${inquiry.title}` : null);
+  const webhook = communicationWebhook(env, channel);
+  const communication = await logCommunication(env, accountId, inquiryId, userId, {
+    direction: "outbound",
+    channel,
+    subject,
+    body,
+    status: webhook ? "queued" : "queued"
+  });
+  const provider = channel === "text" ? "sms_webhook" : channel === "email" ? "email_webhook" : "manual_log";
+  const requestPayload = {
+    communicationId: communication.id,
+    inquiryId,
+    to: channel === "text" ? inquiry.phone : inquiry.email,
+    contactName: inquiry.full_name,
+    subject,
+    body,
+    metadata: payload.metadata || {}
+  };
+
+  if (!webhook) {
+    const delivery = await createDeliveryAttempt(env, communication.id, {
+      provider,
+      status: "queued",
+      request: requestPayload,
+      response: {},
+      errorMessage: `${channelLabel(channel)} provider webhook is not configured.`
+    });
+    await createActivity(env, accountId, inquiryId, userId, "communication.queued", `Queued ${channelLabel(channel)} for provider setup`, {
+      communicationId: communication.id,
+      deliveryId: delivery.id
+    });
+    return { communication, delivery };
+  }
+
+  try {
+    const response = await fetch(webhook, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(requestPayload)
+    });
+    const responseText = await response.text();
+    const responseBody = safeJson(responseText) || { body: responseText.slice(0, 1200) };
+    const status = response.ok ? "sent" : "failed";
+    const externalId = responseBody.id || responseBody.messageId || responseBody.externalMessageId || null;
+    await run(env, "UPDATE communications SET status = ?, external_message_id = ? WHERE id = ?", [status, externalId, communication.id]);
+    const delivery = await createDeliveryAttempt(env, communication.id, {
+      provider,
+      status,
+      request: requestPayload,
+      response: responseBody,
+      errorMessage: response.ok ? null : `Provider returned ${response.status}`
+    });
+    await createActivity(env, accountId, inquiryId, userId, response.ok ? "communication.sent" : "communication.failed", `${response.ok ? "Sent" : "Failed"} ${channelLabel(channel)} for ${inquiry.title}`, {
+      communicationId: communication.id,
+      deliveryId: delivery.id,
+      externalId
+    });
+    return {
+      communication: { ...communication, status, external_message_id: externalId },
+      delivery
+    };
+  } catch (error) {
+    await run(env, "UPDATE communications SET status = 'failed' WHERE id = ?", [communication.id]);
+    const delivery = await createDeliveryAttempt(env, communication.id, {
+      provider,
+      status: "failed",
+      request: requestPayload,
+      response: {},
+      errorMessage: error.message
+    });
+    await createActivity(env, accountId, inquiryId, userId, "communication.failed", `Failed ${channelLabel(channel)} delivery for ${inquiry.title}`, {
+      communicationId: communication.id,
+      deliveryId: delivery.id
+    });
+    return {
+      communication: { ...communication, status: "failed" },
+      delivery
+    };
+  }
+}
+
+async function createDeliveryAttempt(env, communicationId, payload) {
+  const latest = await first(env, "SELECT MAX(attempt_number) AS attempt FROM communication_delivery_attempts WHERE communication_id = ?", [communicationId]);
+  const id = `delivery_${crypto.randomUUID()}`;
+  const attempt = Number(latest?.attempt || 0) + 1;
+  await run(env, `
+    INSERT INTO communication_delivery_attempts (
+      id, communication_id, provider, status, attempt_number, request_json,
+      response_json, error_message
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id,
+    communicationId,
+    payload.provider,
+    payload.status,
+    attempt,
+    JSON.stringify(payload.request || {}),
+    JSON.stringify(payload.response || {}),
+    payload.errorMessage || null
+  ]);
+  return {
+    id,
+    communicationId,
+    provider: payload.provider,
+    status: payload.status,
+    attemptNumber: attempt,
+    errorMessage: payload.errorMessage || null
+  };
+}
+
 export async function createFileRecord(env, accountId, inquiryId, userId, file) {
   const inquiry = await first(env, "SELECT id, site_id FROM inquiries WHERE account_id = ? AND id = ?", [accountId, inquiryId]);
   if (!inquiry) return null;
@@ -698,4 +898,35 @@ function integrationDisplayName(provider) {
     calendar: "Calendar",
     storage: "Storage"
   }[provider] || "Other";
+}
+
+function communicationChannel(channel) {
+  const normalized = String(channel || "internal_note").toLowerCase();
+  if (["email", "phone", "text", "internal_note"].includes(normalized)) return normalized;
+  if (normalized === "manual" || normalized === "photo" || normalized === "web") return "internal_note";
+  return "internal_note";
+}
+
+function channelLabel(channel) {
+  return {
+    email: "email",
+    phone: "call note",
+    text: "text message",
+    internal_note: "internal note"
+  }[channel] || "communication";
+}
+
+function communicationWebhook(env, channel) {
+  if (channel === "email") return env.EMAIL_PROVIDER_WEBHOOK || env.COMMUNICATION_PROVIDER_WEBHOOK || "";
+  if (channel === "text") return env.SMS_PROVIDER_WEBHOOK || env.COMMUNICATION_PROVIDER_WEBHOOK || "";
+  return "";
+}
+
+function safeJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }

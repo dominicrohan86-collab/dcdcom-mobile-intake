@@ -31,10 +31,21 @@ try {
 
   const saved = await request(env, "POST", "/api/inquiries/from-source", {
     rawText: "Spoke with Tom from NTT Data in Ashburn, VA. Need full decommissioning, 40 racks, cable, HVAC units, proposal, and site visit by July 15.",
-    sourceChannel: "phone"
+    sourceChannel: "phone",
+    externalMessageId: "call_001"
   });
   assert(saved.status === 201, "source intake should create inquiry");
   assert(saved.body.id, "source intake should return inquiry id");
+
+  const inboundWebhook = await request(env, "POST", "/api/intake/inbound", {
+    rawText: "Email from Priya at Cushman in Washington DC. Need cable abatement estimate before lease restoration. Missing ceiling height and cable volume.",
+    sourceChannel: "email",
+    sender: "priya.shah@cw.example",
+    subject: "Cable removal request",
+    externalMessageId: "email_001"
+  });
+  assert(inboundWebhook.status === 202, "inbound intake endpoint should accept external messages");
+  assert(inboundWebhook.body.accepted === true, "inbound intake endpoint should mark payload accepted");
 
   const proposal = await request(env, "POST", `/api/inquiries/${saved.body.id}/generate`, {
     type: "proposal",
@@ -45,6 +56,7 @@ try {
 
   const detailAfterProposal = await request(env, "GET", `/api/inquiries/${saved.body.id}`);
   assert(detailAfterProposal.status === 200, "detail after proposal should return 200");
+  assert(detailAfterProposal.body.communications.some((communication) => communication.direction === "inbound"), "detail should include inbound source communication");
   const persistedProposal = detailAfterProposal.body.documents.find((document) => document.document_type === "proposal");
   assert(persistedProposal, "detail should include generated proposal document");
   assert(persistedProposal.body && persistedProposal.body.includes("Scope"), "proposal detail should include latest document body");
@@ -87,6 +99,21 @@ try {
   assert(persistedEmail, "detail should include saved follow-up email");
   assert(persistedEmail.body === "Edited follow-up v2", "detail should expose latest edited email body");
   assert(persistedEmail.generated_by_ai === 0, "manual email version should not be marked AI-generated");
+
+  const sentFollowUp = await request(env, "POST", `/api/inquiries/${saved.body.id}/send-follow-up`, {
+    documentId: emailDraftV2.body.document.documentId,
+    subject: "Quick follow-up on your data center project",
+    body: "Could you send the floor plan, access hours, and utility shutoff requirements?",
+    channel: "email"
+  });
+  assert(sentFollowUp.status === 202, "follow-up send should queue without provider webhook");
+  assert(sentFollowUp.body.communication.status === "queued", "follow-up communication should be queued");
+  assert(sentFollowUp.body.delivery.status === "queued", "delivery attempt should be queued");
+  assert(sentFollowUp.body.document.currentVersion === 3, "queued follow-up should save a new document version");
+
+  const communications = await request(env, "GET", `/api/inquiries/${saved.body.id}/communications`);
+  assert(communications.status === 200, "communications listing should return 200");
+  assert(communications.body.communications.some((communication) => communication.direction === "outbound" && communication.status === "queued"), "communications listing should include queued outbound follow-up");
 
   const form = new FormData();
   form.append("category", "floor_plan");

@@ -18,6 +18,7 @@ export function emailScreen({ state, selected }) {
   const draft = edited?.body ?? generated?.body ?? emailText(item, state);
   const subject = edited?.subject ?? generated?.subject ?? "Quick follow-up on your data center project";
   const busy = state.aiActionLoading === "follow_up_email";
+  const sendBusy = state.aiActionLoading === "send_follow_up";
   const editedLabel = edited ? `<span class="draft-status">Edited</span>` : "";
 
   return shell(`
@@ -39,6 +40,7 @@ export function emailScreen({ state, selected }) {
         <button class="secondary" data-action="regenerate" ${busy ? "disabled" : ""}>${icon("refresh")} ${busy ? "Generating..." : "Regenerate"}</button>
         <button class="primary" data-action="toggle-edit">${icon("edit")} Edit</button>
         <button class="success" data-action="save-draft" ${busy ? "disabled" : ""}>${icon("check")} ${busy ? "Saving..." : "Save"}</button>
+        <button class="primary wide" data-action="send-follow-up" ${sendBusy ? "disabled" : ""}>${icon("mail")} ${sendBusy ? "Queueing..." : "Queue Send"}</button>
       </div>
       ${state.aiError ? `<p class="notice warning">${state.aiError}</p>` : ""}
       ${state.savedNotice ? `<p class="notice">${state.savedNotice}</p>` : ""}

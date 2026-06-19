@@ -14,6 +14,7 @@ A mobile-first prototype for DCDcom.com that turns customer calls, emails, texts
 - OpenAI-backed structured intake extraction with deterministic fallback when no API key is configured.
 - AI-generated follow-up emails, scopes of work, site visit checklists, estimates, and proposal drafts persisted as database records.
 - Generated and manually edited document bodies are versioned in D1, so drafts survive reloads and keep revision history.
+- Inbound call/email/text intake and outbound follow-up delivery records stored in a customer communication timeline.
 - R2-backed uploads for photos, floor plans, equipment lists, and customer attachments, with D1 metadata.
 - Workspace-authenticated, role-aware write APIs with audit logging for workflow, settings, and integration changes.
 
@@ -48,7 +49,7 @@ npm run verify
 
 The app is configured for a Cloudflare D1 binding named `DB` and an R2 binding named `FILES` in `.openai/hosting.json`. The source of truth is `db/schema.ts`; `npm run db:materialize` generates `db/schema.sql`, `db/migrations/0001_initial.sql`, and `src/server/schema.js`.
 
-The initial database covers accounts, users, companies, contacts, sites, inquiries, raw intake sources, AI runs, AI extracted fields, missing requirements, summaries, estimates, site visits, checklists, documents, proposals, communications, files, integrations, notifications, activity events, and audit logs.
+The initial database covers accounts, users, companies, contacts, sites, inquiries, raw intake sources, AI runs, AI extracted fields, missing requirements, summaries, estimates, site visits, checklists, documents, proposals, communications, communication delivery attempts, files, integrations, notifications, activity events, and audit logs.
 
 ## AI Configuration
 
@@ -57,16 +58,24 @@ Set these runtime environment variables for live AI extraction:
 ```bash
 OPENAI_API_KEY=your_api_key
 OPENAI_MODEL=gpt-5.5
+EMAIL_PROVIDER_WEBHOOK=https://your-email-service.example/send
+SMS_PROVIDER_WEBHOOK=https://your-sms-service.example/send
 ```
 
 When `OPENAI_API_KEY` is missing, the app still works with a deterministic fallback extractor and records the fallback in `ai_runs`.
 
+When email/SMS provider webhooks are missing, outbound follow-ups are queued and logged instead of being falsely marked as sent. Connect `EMAIL_PROVIDER_WEBHOOK`, `SMS_PROVIDER_WEBHOOK`, or `COMMUNICATION_PROVIDER_WEBHOOK` to a provider adapter such as Postmark, SendGrid, Twilio, or a company middleware service.
+
 AI/API endpoints:
 
 - `POST /api/ai/intake-preview` analyzes pasted customer communication and returns structured preview rows.
+- `POST /api/intake/inbound` accepts external email/SMS/call intake, runs extraction, and creates a database-backed opportunity.
 - `POST /api/inquiries/from-source` analyzes the raw source, persists normalized records to D1, and returns the saved inquiry id.
 - `POST /api/inquiries/:id/generate` generates and persists downstream work products such as follow-up emails, proposals, scopes, estimates, and site checklists.
 - `POST /api/inquiries/:id/documents` saves edited drafts as durable document versions.
+- `GET /api/inquiries/:id/communications` returns the customer communication timeline.
+- `POST /api/inquiries/:id/communications` logs an inbound or outbound customer communication.
+- `POST /api/inquiries/:id/send-follow-up` saves the follow-up email version and queues/sends provider delivery.
 - `GET /api/inquiries/:id/files` lists linked photos, plans, equipment lists, and attachments.
 - `POST /api/inquiries/:id/files` stores bytes in R2 and metadata in D1.
 - `GET /api/files/:id` returns an authorized file download.
@@ -80,7 +89,7 @@ The build output is written to `dist/` with `dist/server/index.js`, `dist/client
 
 ## Local Verification
 
-`npm run test:api` runs an end-to-end smoke test against the local Worker environment. It verifies bootstrap, AI intake fallback, inquiry creation, proposal generation and readback, edited document versioning, file upload/download, settings, integration connection, CRM sync, and workflow status updates.
+`npm run test:api` runs an end-to-end smoke test against the local Worker environment. It verifies bootstrap, AI intake fallback, inbound intake webhooks, inquiry creation, proposal generation and readback, edited document versioning, queued follow-up delivery, communication timeline readback, file upload/download, settings, integration connection, CRM sync, and workflow status updates.
 
 `npm run readiness` prints a readiness report using the local Worker environment. Missing `OPENAI_API_KEY` is treated as a warning because fallback AI remains available locally; production should configure it before customer use.
 

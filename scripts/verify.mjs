@@ -59,7 +59,7 @@ assert(product.product.documentType === "proposal", "work product should preserv
 assert(product.product.sections.length >= 3, "proposal should include sections");
 
 const schema = await readFile("db/schema.sql", "utf8");
-for (const token of ["CREATE TABLE IF NOT EXISTS ai_runs", "CREATE TABLE IF NOT EXISTS proposals", "CREATE TABLE IF NOT EXISTS estimate_lines"]) {
+for (const token of ["CREATE TABLE IF NOT EXISTS ai_runs", "CREATE TABLE IF NOT EXISTS proposals", "CREATE TABLE IF NOT EXISTS estimate_lines", "CREATE TABLE IF NOT EXISTS communication_delivery_attempts"]) {
   assert(schema.includes(token), `schema should include ${token}`);
 }
 
@@ -77,9 +77,12 @@ for (const token of ["requireWriteAccess", "/api/integrations", "/api/settings",
 for (const token of ["/api/readiness", "readinessReport", "OPENAI_API_KEY"]) {
   assert(api.includes(token), `api should include ${token}`);
 }
+for (const token of ["/api/intake/inbound", "/communications", "/send-follow-up"]) {
+  assert(api.includes(token), `api should include ${token}`);
+}
 
 const repository = await readFile("src/server/repository.js", "utf8");
-for (const token of ["INSERT INTO audit_log", "INSERT INTO sync_events", "UPDATE user_preferences", "integration_connections"]) {
+for (const token of ["INSERT INTO audit_log", "INSERT INTO sync_events", "UPDATE user_preferences", "integration_connections", "sendOutboundCommunication", "communication_delivery_attempts"]) {
   assert(repository.includes(token), `repository should include ${token}`);
 }
 

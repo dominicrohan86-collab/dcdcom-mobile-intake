@@ -47,6 +47,12 @@ VALUES
   ('src_cushman_email', 'inq_cushman_dc', 'email', 'Cable removal request', 'Priya Shah', 'Need cable removed before lease restoration. Need estimate and details on ceiling height.', 'user_alex'),
   ('src_digital_text', 'inq_digital_phx', 'text', 'Electrical scope', 'Mei Ortiz', 'Electrical decommissioning request for Phoenix site. Need access hours and load schedule.', 'user_alex');
 
+INSERT OR IGNORE INTO communications (id, inquiry_id, contact_id, direction, channel, subject, body, status, created_by_user_id)
+VALUES
+  ('comm_ntt_call', 'inq_ntt_ashburn', 'ct_michael', 'inbound', 'phone', 'Call notes', 'Customer requested data center decommissioning in Ashburn with rack removal, cable abatement, HVAC removal, and site cleanup.', 'received', 'user_alex'),
+  ('comm_cushman_email', 'inq_cushman_dc', 'ct_priya', 'inbound', 'email', 'Cable removal request', 'Need cable removed before lease restoration. Need estimate and details on ceiling height.', 'received', 'user_alex'),
+  ('comm_digital_text', 'inq_digital_phx', 'ct_mei', 'inbound', 'text', 'Electrical decommissioning request for Phoenix site. Need access hours and load schedule.', 'received', 'user_alex');
+
 INSERT OR IGNORE INTO missing_requirements (id, inquiry_id, requirement_key, label, category, severity, status)
 VALUES
   ('miss_ntt_sqft', 'inq_ntt_ashburn', 'square_footage', 'Square footage / suite size', 'scope', 'high', 'open'),

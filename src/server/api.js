@@ -2,7 +2,7 @@ import { ensureDatabase, json, readUser, run } from "./db.js";
 import { analyzeIntake, extractionToPreview, generateWorkProduct } from "./ai.js";
 import { requireAdminAccess, requireWriteAccess } from "./auth.js";
 import { readJson, optionalEnum, requiredString, ValidationError } from "./validation.js";
-import { createActivity, createFileRecord, createGeneratedWorkProduct, createInquiry, createInquiryFromExtraction, getFileForDownload, getInquiryDetail, getUserPreferences, listFilesForInquiry, listInquiries, listIntegrations, recordAiRun, saveDocumentDraft, syncInquiry, updateInquiryStatus, updateMissingRequirement, updateUserPreferences, upsertIntegration } from "./repository.js";
+import { createActivity, createFileRecord, createGeneratedWorkProduct, createInquiry, createInquiryFromExtraction, getFileForDownload, getInquiryDetail, getUserPreferences, listCommunications, listFilesForInquiry, listInquiries, listIntegrations, logCommunication, recordAiRun, saveDocumentDraft, sendOutboundCommunication, syncInquiry, updateInquiryStatus, updateMissingRequirement, updateUserPreferences, upsertIntegration } from "./repository.js";
 
 const ACCOUNT_ID = "acct_dcdcom";
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -122,6 +122,32 @@ export async function handleApi(request, env) {
     }, 201);
   }
 
+  if (url.pathname === "/api/intake/inbound" && request.method === "POST") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request, { maxBytes: 128 * 1024 });
+    const sourceChannel = normalizeSourceChannel(payload.sourceChannel || payload.channel);
+    const rawText = requiredString(payload, "rawText", { maxLength: 40000 });
+    const analysis = await analyzeIntake(env, { rawText, sourceChannel });
+    const saved = await createInquiryFromExtraction(env, ACCOUNT_ID, user.id, {
+      ...payload,
+      rawText,
+      sourceChannel,
+      subject: payload.subject || `${sourceChannel} intake`,
+      sender: payload.sender || "External intake",
+      externalMessageId: payload.externalMessageId || null
+    }, analysis);
+    return json({
+      ...saved,
+      accepted: true,
+      mode: analysis.mode,
+      model: analysis.model,
+      error: analysis.error || null,
+      extraction: analysis.extraction,
+      preview: extractionToPreview({ ...analysis.extraction, mode: analysis.mode })
+    }, 202);
+  }
+
   const inquiryMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)$/);
   if (inquiryMatch && request.method === "GET") {
     const detail = await getInquiryDetail(env, ACCOUNT_ID, inquiryMatch[1]);
@@ -177,6 +203,60 @@ export async function handleApi(request, env) {
       status: optionalEnum(payload.status, ["draft", "review", "approved", "sent", "archived"], "draft")
     });
     return json({ document }, 201);
+  }
+
+  const communicationsMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/communications$/);
+  if (communicationsMatch && request.method === "GET") {
+    return json({ communications: await listCommunications(env, ACCOUNT_ID, communicationsMatch[1]) });
+  }
+  if (communicationsMatch && request.method === "POST") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request, { maxBytes: 128 * 1024 });
+    const communication = await logCommunication(env, ACCOUNT_ID, communicationsMatch[1], user.id, {
+      direction: optionalEnum(payload.direction, ["inbound", "outbound"], "inbound"),
+      channel: normalizeCommunicationChannel(payload.channel),
+      subject: payload.subject ? requiredString(payload, "subject", { maxLength: 220 }) : undefined,
+      body: requiredString(payload, "body", { maxLength: 40000 }),
+      status: optionalEnum(payload.status, ["draft", "queued", "sent", "received", "logged", "failed"], undefined),
+      externalMessageId: payload.externalMessageId || null,
+      occurredAt: payload.occurredAt || null
+    });
+    return communication ? json({ communication }, 201) : json({ error: "Inquiry not found" }, 404);
+  }
+
+  const sendFollowUpMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/send-follow-up$/);
+  if (sendFollowUpMatch && request.method === "POST") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request, { maxBytes: 128 * 1024 });
+    const detail = await getInquiryDetail(env, ACCOUNT_ID, sendFollowUpMatch[1]);
+    if (!detail) return json({ error: "Inquiry not found" }, 404);
+    const body = requiredString(payload, "body", { maxLength: 40000 });
+    const subject = payload.subject ? requiredString(payload, "subject", { maxLength: 220 }) : "Quick follow-up on your data center project";
+    const document = await saveDocumentDraft(env, ACCOUNT_ID, sendFollowUpMatch[1], user.id, {
+      documentId: payload.documentId || null,
+      documentType: "follow_up_email",
+      title: payload.title || `Follow-up Email - ${detail.inquiry.title}`,
+      subject,
+      body,
+      status: "draft",
+      metadata: {
+        ...(payload.metadata || {}),
+        queuedForDelivery: true
+      }
+    });
+    const result = await sendOutboundCommunication(env, ACCOUNT_ID, sendFollowUpMatch[1], user.id, {
+      channel: normalizeCommunicationChannel(payload.channel || "email"),
+      subject,
+      body,
+      metadata: {
+        ...(payload.metadata || {}),
+        documentId: document.documentId,
+        documentVersionId: document.versionId
+      }
+    });
+    return json({ ...result, document }, result?.communication?.status === "sent" ? 200 : 202);
   }
 
   const filesMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/files$/);
@@ -280,6 +360,13 @@ function normalizeSourceChannel(channel) {
   return ["email", "phone", "text", "manual", "photo", "web"].includes(normalized) ? normalized : "manual";
 }
 
+function normalizeCommunicationChannel(channel) {
+  const normalized = String(channel || "internal_note").toLowerCase();
+  if (["email", "phone", "text", "internal_note"].includes(normalized)) return normalized;
+  if (["manual", "photo", "web"].includes(normalized)) return "internal_note";
+  return "internal_note";
+}
+
 function normalizeFileCategory(category) {
   const normalized = String(category || "other").toLowerCase();
   return ["photo", "floor_plan", "equipment_list", "contract", "email_attachment", "other"].includes(normalized) ? normalized : "other";
@@ -350,6 +437,10 @@ async function ensureBootstrap(env, user) {
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `, ["src_ntt_call", "inq_ntt_ashburn", "phone", "Call notes", "Michael Reynolds", "Customer requested data center decommissioning in Ashburn with rack removal, cable abatement, HVAC removal, and site cleanup.", user.id]);
   await run(env, `
+    INSERT INTO communications (id, inquiry_id, contact_id, direction, channel, subject, body, status, created_by_user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, ["comm_ntt_seed_call", "inq_ntt_ashburn", "ct_michael", "inbound", "phone", "Call notes", "Customer requested data center decommissioning in Ashburn with rack removal, cable abatement, HVAC removal, and site cleanup.", "received", user.id]);
+  await run(env, `
     INSERT INTO ai_summaries (id, inquiry_id, summary_type, body, model_name, confidence_score, generated_by_user_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `, ["sum_ntt_intake", "inq_ntt_ashburn", "intake", "Client is requesting decommissioning of a data center suite. Timeline appears urgent and key details are missing on equipment and access.", "mock-extractor-v1", 78, user.id]);
@@ -367,7 +458,7 @@ async function readinessReport(env, user) {
   const checks = [
     { key: "d1_binding", ok: Boolean(env.DB), detail: "D1 binding DB is configured." },
     { key: "r2_binding", ok: Boolean(env.FILES), detail: env.FILES ? "R2 binding FILES is configured." : "R2 binding FILES is missing." },
-    { key: "schema", ok: Number(tableInfo?.count || 0) >= 27, detail: `${tableInfo?.count || 0} database tables available.` },
+    { key: "schema", ok: Number(tableInfo?.count || 0) >= 28, detail: `${tableInfo?.count || 0} database tables available.` },
     { key: "account", ok: Boolean(account), detail: account ? "DCDcom account is present." : "DCDcom account bootstrap is missing." },
     { key: "user_identity", ok: Boolean(user?.email), detail: user?.email ? `Authenticated as ${user.email}.` : "No user identity detected." },
     { key: "openai_key", ok: Boolean(env.OPENAI_API_KEY), warningOnly: true, detail: env.OPENAI_API_KEY ? "Live OpenAI extraction is configured." : "OPENAI_API_KEY is missing; fallback AI will be used." }

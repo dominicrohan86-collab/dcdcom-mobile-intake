@@ -218,6 +218,32 @@ export interface Proposal {
   updated_at: string;
 }
 
+export interface Communication {
+  id: string;
+  inquiry_id: string;
+  contact_id?: string | null;
+  direction: "inbound" | "outbound";
+  channel: "email" | "phone" | "text" | "internal_note";
+  subject?: string | null;
+  body: string;
+  status: "draft" | "queued" | "sent" | "received" | "logged" | "failed";
+  external_message_id?: string | null;
+  created_by_user_id?: string | null;
+  occurred_at: string;
+}
+
+export interface CommunicationDeliveryAttempt {
+  id: string;
+  communication_id: string;
+  provider: string;
+  status: "queued" | "sent" | "failed";
+  attempt_number: number;
+  request_json: string;
+  response_json: string;
+  error_message?: string | null;
+  created_at: string;
+}
+
 export interface ActivityEvent {
   id: string;
   account_id: string;

@@ -252,10 +252,21 @@ export const schemaStatements = [
     channel TEXT NOT NULL CHECK (channel IN ('email','phone','text','internal_note')),
     subject TEXT,
     body TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'logged' CHECK (status IN ('draft','sent','received','logged','failed')),
+    status TEXT NOT NULL DEFAULT 'logged' CHECK (status IN ('draft','queued','sent','received','logged','failed')),
     external_message_id TEXT,
     created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS communication_delivery_attempts (
+    id TEXT PRIMARY KEY,
+    communication_id TEXT NOT NULL REFERENCES communications(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued','sent','failed')),
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+    request_json TEXT NOT NULL DEFAULT '{}',
+    response_json TEXT NOT NULL DEFAULT '{}',
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   `CREATE TABLE IF NOT EXISTS files (
     id TEXT PRIMARY KEY,
@@ -337,6 +348,7 @@ export const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_documents_inquiry_type ON documents(inquiry_id, document_type, status)`,
   `CREATE INDEX IF NOT EXISTS idx_activity_inquiry ON activity_events(inquiry_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_communications_inquiry ON communications(inquiry_id, occurred_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_delivery_communication ON communication_delivery_attempts(communication_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_files_inquiry ON files(inquiry_id, category)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id, created_at DESC)`
 ];

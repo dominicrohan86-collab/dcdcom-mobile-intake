@@ -75,6 +75,18 @@ export function saveInquiryDocument(inquiryId, payload) {
   return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/documents`, payload);
 }
 
+export function sendFollowUpEmail(inquiryId, payload) {
+  return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/send-follow-up`, payload);
+}
+
+export function listInquiryCommunications(inquiryId) {
+  return getJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/communications`);
+}
+
+export function logInquiryCommunication(inquiryId, payload) {
+  return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/communications`, payload);
+}
+
 export function saveSettings(payload) {
   return putJson("/api/settings", payload);
 }

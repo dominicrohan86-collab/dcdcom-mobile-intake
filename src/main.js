@@ -1,6 +1,6 @@
 import { emailText } from "./lib/drafts.js";
 import { extractFromText } from "./lib/extraction.js";
-import { analyzeIntakePreview, bootstrapWorkspace, connectIntegration, generateInquiryWorkProduct, getInquiryDetail, saveInquiryDocument, saveInquiryFromSource, saveSettings, syncInquiry, updateInquiryStatus, uploadInquiryFile } from "./lib/api-client.js";
+import { analyzeIntakePreview, bootstrapWorkspace, connectIntegration, generateInquiryWorkProduct, getInquiryDetail, saveInquiryDocument, saveInquiryFromSource, saveSettings, sendFollowUpEmail, syncInquiry, updateInquiryStatus, uploadInquiryFile } from "./lib/api-client.js";
 import { scopeBullets } from "./lib/workflows.js";
 import { inquiries } from "./state/inquiries.js";
 import { state } from "./state/app-state.js";
@@ -66,6 +66,7 @@ async function refreshInquiryDetail(inquiryId) {
     if (index >= 0) inquiries[index] = { ...inquiries[index], ...next };
     else inquiries.unshift(next);
     state.uploadedFiles[inquiryId] = (detail.files || []).map(publicFileFromApi);
+    state.communications[inquiryId] = (detail.communications || []).map(publicCommunicationFromApi);
     hydrateGeneratedProducts(inquiryId, detail.documents || []);
     render();
   } catch {
@@ -405,6 +406,10 @@ async function handleAction(button) {
     const result = await saveEditedEmailDraft();
     return setScreen("email", { savedNotice: result ? "Draft saved to Docs as a new version." : state.savedNotice });
   }
+  if (action === "send-follow-up") {
+    const result = await sendFollowUpDraft();
+    return setScreen("email", { savedNotice: result ? deliveryNotice(result) : state.savedNotice });
+  }
   if (action === "copy") {
     const item = selected();
     const generated = state.generatedProducts[item.id]?.follow_up_email;
@@ -552,6 +557,47 @@ async function saveEditedEmailDraft() {
   }
 }
 
+async function sendFollowUpDraft() {
+  const item = selected();
+  const generated = state.generatedProducts[item.id]?.follow_up_email;
+  const draft = state.documentDrafts[item.id]?.follow_up_email;
+  const body = app.querySelector("#emailDraft")?.value ?? draft?.body ?? generated?.body ?? emailText(item, state);
+  const subject = draft?.subject || generated?.subject || "Quick follow-up on your data center project";
+  state.aiActionLoading = "send_follow_up";
+  state.aiError = "";
+  state.savedNotice = "";
+  render();
+  try {
+    const result = await sendFollowUpEmail(item.id, {
+      documentId: draft?.documentId || generated?.documentId,
+      title: `Follow-up Email - ${item.title}`,
+      subject,
+      body,
+      channel: "email",
+      metadata: {
+        confidenceScore: generated?.confidenceScore || item.confidence || 70,
+        missingRiskNotes: generated?.missingRiskNotes || item.missingFull || []
+      }
+    });
+    if (!state.generatedProducts[item.id]) state.generatedProducts[item.id] = {};
+    state.generatedProducts[item.id].follow_up_email = productFromSavedDocument(result.document);
+    if (!state.communications[item.id]) state.communications[item.id] = [];
+    state.communications[item.id].unshift(publicCommunicationFromApi(result.communication));
+    if (state.documentDrafts[item.id]) delete state.documentDrafts[item.id].follow_up_email;
+    state.savedNotice = deliveryNotice(result);
+    addActivity(`${result.communication.status === "sent" ? "Sent" : "Queued"} follow-up email for ${item.title}`);
+    return result;
+  } catch (error) {
+    state.aiError = error.message;
+    state.savedNotice = "Follow-up email stayed local because the worker API is unavailable.";
+    addActivity(`Kept follow-up email local for ${item.title}`);
+    return null;
+  } finally {
+    state.aiActionLoading = "";
+    render();
+  }
+}
+
 async function persistStatus(status) {
   try {
     await updateInquiryStatus(selected().id, status);
@@ -692,6 +738,24 @@ function publicFileFromApi(file) {
     category: file.category,
     url: `/api/files/${encodeURIComponent(file.id)}`
   };
+}
+
+function publicCommunicationFromApi(communication) {
+  return {
+    id: communication.id,
+    direction: communication.direction,
+    channel: communication.channel,
+    subject: communication.subject || "",
+    body: communication.body || "",
+    status: communication.status,
+    occurredAt: communication.occurred_at || communication.occurredAt || ""
+  };
+}
+
+function deliveryNotice(result) {
+  if (result?.communication?.status === "sent") return "Follow-up email sent and logged.";
+  if (result?.delivery?.errorMessage) return `Follow-up email queued: ${result.delivery.errorMessage}`;
+  return "Follow-up email queued and logged.";
 }
 
 function productFromDocument(document) {
