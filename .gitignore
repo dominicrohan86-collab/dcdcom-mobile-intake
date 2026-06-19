@@ -1,6 +1,6 @@
-dist/
-node_modules/
-work/
 .DS_Store
+node_modules/
+dist/
+.local/
 .env
-*.log
+work/

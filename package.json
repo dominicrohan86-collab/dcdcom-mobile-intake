@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "dev": "node scripts/dev-server.mjs"
+    "db:materialize": "node scripts/materialize-db.mjs",
+    "build": "node scripts/materialize-db.mjs && node scripts/build.mjs",
+    "dev": "node --no-warnings scripts/dev-server.mjs",
+    "test:api": "node --no-warnings scripts/test-api.mjs",
+    "readiness": "node --no-warnings scripts/readiness.mjs",
+    "verify": "node scripts/materialize-db.mjs && node scripts/verify.mjs && node --no-warnings scripts/test-api.mjs && node --no-warnings scripts/readiness.mjs"
   }
 }

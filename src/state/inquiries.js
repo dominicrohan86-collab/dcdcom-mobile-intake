@@ -1,6 +1,6 @@
 export const inquiries = [
   {
-    id: "ntt",
+    id: "inq_ntt_ashburn",
     company: "NTT Data",
     title: "NTT Data - Ashburn, VA",
     service: "Data Center Decommissioning",
@@ -34,7 +34,7 @@ export const inquiries = [
     ai: "Medium"
   },
   {
-    id: "cushman",
+    id: "inq_cushman_dc",
     company: "Cushman & Wakefield",
     title: "Cushman & Wakefield",
     service: "Cable Abatement",
@@ -82,7 +82,7 @@ export const inquiries = [
     ai: "High"
   },
   {
-    id: "digital",
+    id: "inq_digital_phx",
     company: "Digital Realty",
     title: "Digital Realty - Phoenix, AZ",
     service: "Electrical Decommissioning",

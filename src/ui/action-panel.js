@@ -23,24 +23,33 @@ export function actionPanel({ state, selected }) {
 const money = (value) => `$${value.toLocaleString()}`;
 
 const panels = {
-  estimate(item) {
+  estimate(item, state) {
+    const generated = state.generatedProducts[item.id]?.estimate || state.generatedProducts[item.id]?.proposal;
     const estimate = estimateFor(item);
+    const lineItems = generated?.estimate?.lineItems || [
+      ["Labor", estimate.labor],
+      ["Logistics", estimate.logistics],
+      ["Recycling", estimate.recycling],
+      ["Contingency", estimate.contingency]
+    ].map(([description, value]) => ({ description, unitCostCents: value }));
+    const low = generated?.estimate?.lowCents ? Math.round(generated.estimate.lowCents / 100) : estimate.low;
+    const high = generated?.estimate?.highCents ? Math.round(generated.estimate.highCents / 100) : estimate.high;
     return {
       title: "Estimate Builder",
       body: `
         <div class="estimate-grid">
-          <div><span>Labor</span><b>${money(estimate.labor)}</b></div>
-          <div><span>Logistics</span><b>${money(estimate.logistics)}</b></div>
-          <div><span>Recycling</span><b>${money(estimate.recycling)}</b></div>
-          <div><span>Contingency</span><b>${money(estimate.contingency)}</b></div>
+          ${lineItems.slice(0, 4).map((line) => `<div><span>${line.description}</span><b>${money(Math.round((line.quantity || 1) * (line.unitCostCents || 0) / 100))}</b></div>`).join("")}
         </div>
-        <div class="estimate-total"><span>Recommended range</span><strong>${money(estimate.low)} - ${money(estimate.high)}</strong><em>Target margin ${estimate.margin}</em></div>
+        <div class="estimate-total"><span>Recommended range</span><strong>${money(low)} - ${money(high)}</strong><em>${generated?.estimate?.assumptions || `Target margin ${estimate.margin}`}</em></div>
         <button class="primary full" data-action="save-estimate">${icon("check")} Save Estimate</button>
       `
     };
   },
   "site-check"(item, state) {
-    const checks = [
+    const generated = state.generatedProducts[item.id]?.site_checklist;
+    const checks = generated?.body
+      ? generated.body.split("\n").map((line, index) => [`ai-${index}`, line.replace(/^[-*\d.\s]+/, "").trim()]).filter(([, label]) => label)
+      : [
       ["access", "Confirm site access window"],
       ["photos", "Request photos / floor plan"],
       ["inventory", "Validate rack and equipment inventory"],
@@ -57,13 +66,14 @@ const panels = {
       `
     };
   },
-  scope(item) {
+  scope(item, state) {
+    const generated = state.generatedProducts[item.id]?.scope_of_work;
     return {
       title: "Scope of Work",
       body: `
         <div class="scope-preview">
           <h4>${item.title}</h4>
-          <ul>${scopeBullets(item).map((line) => `<li>${line}</li>`).join("")}</ul>
+          ${generated ? `<p>${escapeHtml(generated.body).replace(/\n/g, "<br>")}</p>` : `<ul>${scopeBullets(item).map((line) => `<li>${line}</li>`).join("")}</ul>`}
         </div>
         <button class="secondary full" data-action="copy-scope">${icon("copy")} Copy Scope</button>
         <button class="primary full" data-screen="proposal">${icon("file")} Open Proposal</button>
@@ -122,14 +132,15 @@ const panels = {
       `
     };
   },
-  notifications() {
+  notifications(item, state) {
+    const settings = parseSettings(state.preferences?.settings_json);
     return {
       title: "Notification Rules",
       body: `
         <div class="settings-form">
-          <label><input type="checkbox" checked/> Alert when high priority inquiries arrive</label>
-          <label><input type="checkbox" checked/> Remind me before lease deadlines</label>
-          <label><input type="checkbox"/> Send digest at end of day</label>
+          <label><input type="checkbox" data-setting="highPriorityAlerts" ${settings.highPriorityAlerts !== false ? "checked" : ""}/> Alert when high priority inquiries arrive</label>
+          <label><input type="checkbox" data-setting="leaseDeadlineReminders" ${settings.leaseDeadlineReminders !== false ? "checked" : ""}/> Remind me before lease deadlines</label>
+          <label><input type="checkbox" data-setting="dailyDigest" ${settings.dailyDigest ? "checked" : ""}/> Send digest at end of day</label>
         </div>
         <button class="primary full" data-action="save-settings">${icon("check")} Save Rules</button>
       `
@@ -139,19 +150,20 @@ const panels = {
     return {
       title: "Account",
       body: `
-        <div class="contact-card"><b>Alex Morgan</b><span>DCDcom estimator</span><span>alex@dcdcom.com</span></div>
+        <div class="contact-card"><b>Alex Morgan</b><span>DCDcom operations lead</span><span>alex@dcdcom.com</span></div>
         <button class="primary full" data-action="save-settings">${icon("check")} Save Profile</button>
       `
     };
   },
-  integrations() {
+  integrations(item, state) {
+    const connected = new Set((state.integrations || []).filter((integration) => integration.status === "connected").map((integration) => integration.provider));
     return {
       title: "Integrations",
       body: `
         <div class="integration-list">
-          <div><b>CRM</b><span>Ready to sync opportunities</span><button data-action="connect-integration">Connect</button></div>
-          <div><b>Email</b><span>Drafts can be exported to your mailbox</span><button data-action="connect-integration">Connect</button></div>
-          <div><b>Calendar</b><span>Site visits can create holds</span><button data-action="connect-integration">Connect</button></div>
+          <div><b>CRM</b><span>${connected.has("crm") ? "Connected for opportunity sync" : "Ready to sync opportunities"}</span><button data-action="connect-integration" data-provider="crm">${connected.has("crm") ? "Reconnect" : "Connect"}</button></div>
+          <div><b>Email</b><span>${connected.has("email") ? "Connected for draft export" : "Drafts can be exported to your mailbox"}</span><button data-action="connect-integration" data-provider="email">${connected.has("email") ? "Reconnect" : "Connect"}</button></div>
+          <div><b>Calendar</b><span>${connected.has("calendar") ? "Connected for site visit holds" : "Site visits can create holds"}</span><button data-action="connect-integration" data-provider="calendar">${connected.has("calendar") ? "Reconnect" : "Connect"}</button></div>
         </div>
       `
     };
@@ -166,3 +178,22 @@ const panels = {
     };
   }
 };
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#039;"
+  })[char]);
+}
+
+function parseSettings(value) {
+  if (!value) return {};
+  try {
+    return typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    return {};
+  }
+}
