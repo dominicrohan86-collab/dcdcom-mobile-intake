@@ -1,5 +1,6 @@
 export const state = {
   screen: "today",
+  history: [],
   selectedId: "ntt",
   tone: "Professional",
   emailEditable: false,

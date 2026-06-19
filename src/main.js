@@ -18,9 +18,22 @@ function selected() {
   return inquiries.find((item) => item.id === state.selectedId) || inquiries[0];
 }
 
-function setScreen(screen, patch = {}) {
+function setScreen(screen, patch = {}, options = {}) {
+  if (options.push && screen !== state.screen) {
+    state.history.push(state.screen);
+    state.history = state.history.slice(-12);
+  }
   Object.assign(state, patch, { screen, modal: patch.modal ?? null });
   render();
+}
+
+function goBack() {
+  if (state.modal) {
+    state.modal = null;
+    return render();
+  }
+  const previous = state.history.pop() || "today";
+  setScreen(previous, { savedNotice: "", modal: null });
 }
 
 function addActivity(entry) {
@@ -83,14 +96,14 @@ function bindScreen() {
   app.querySelectorAll("[data-screen]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      setScreen(button.dataset.screen, { savedNotice: "" });
+      setScreen(button.dataset.screen, { savedNotice: "" }, { push: true });
     });
   });
 
   app.querySelectorAll("[data-open]").forEach((el) => {
     el.addEventListener("click", (event) => {
       event.stopPropagation();
-      setScreen("detail", { selectedId: el.dataset.open, savedNotice: "" });
+      setScreen("detail", { selectedId: el.dataset.open, savedNotice: "", expandedSummary: false }, { push: true });
     });
   });
 
@@ -157,7 +170,7 @@ function bindScreen() {
 function handleAction(button) {
   const action = button.dataset.action;
   if (button.dataset.id) state.selectedId = button.dataset.id;
-  if (action === "back") return setScreen(state.screen === "add" ? "today" : "detail", { savedNotice: "" });
+  if (action === "back") return goBack();
   if (action === "close-modal") {
     state.modal = null;
     return render();
@@ -193,8 +206,14 @@ function handleAction(button) {
     return setScreen("proposal", { savedNotice: "Sent to internal review queue." });
   }
   if (action === "expand-summary") return setScreen("detail", { expandedSummary: !state.expandedSummary });
-  if (action === "phone" || action === "mail") return setScreen("detail", { modal: "contact-actions" });
-  if (action === "proposal-edit") return setScreen("proposal", { modal: "edit-details" });
+  if (action === "phone" || action === "mail") {
+    state.modal = "contact-actions";
+    return render();
+  }
+  if (action === "proposal-edit") {
+    state.modal = "edit-details";
+    return render();
+  }
   if (["estimate", "site-check", "scope", "edit-details", "view-confidence", "account", "notifications", "templates", "integrations", "more-actions"].includes(action)) {
     state.modal = action === "more-actions" ? "more" : action;
     return render();
