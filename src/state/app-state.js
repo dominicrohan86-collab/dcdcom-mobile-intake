@@ -22,10 +22,12 @@ export const state = {
   generatedProducts: {},
   documentDrafts: {},
   communications: {},
+  siteVisits: {},
   uploadedFiles: {},
   pendingPhoto: null,
   fileUploading: false,
   preferences: null,
+  user: null,
   integrations: [],
   includeOptions: {
     missing: true,

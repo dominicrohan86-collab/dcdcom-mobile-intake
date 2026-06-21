@@ -3,12 +3,24 @@ import { badge, shell } from "../components.js";
 
 export function detailScreen({ state, selected }) {
   const item = selected();
-  const missingRows = item.missingFull.map((m) => `<li class="todo"><span></span>${m}</li>`).join("");
+  const missingItems = item.missingItems || item.missingFull.map((label, index) => ({ id: `local_missing_${index}`, label, status: "open", severity: "medium" }));
+  const missingRows = missingItems.map((m) => `
+    <li class="${["received", "waived"].includes(m.status) ? "done" : "todo"} missing-row">
+      <span></span>
+      <b>${escapeHtml(m.label)}</b>
+      <em>${escapeHtml(m.status)}</em>
+      ${m.id.startsWith("local_") ? "" : `<div class="missing-actions">
+        ${m.status === "open" ? `<button data-action="missing-requested" data-requirement-id="${m.id}">Request</button>` : ""}
+        ${m.status !== "received" ? `<button data-action="missing-received" data-requirement-id="${m.id}">Received</button>` : ""}
+        ${m.status !== "waived" ? `<button data-action="missing-waived" data-requirement-id="${m.id}">Waive</button>` : ""}
+      </div>`}
+    </li>
+  `).join("");
   const capturedRows = item.captured.map(([k, v]) => `<li class="done"><span></span><b>${k}</b><em>${v}</em></li>`).join("");
   const files = state.uploadedFiles[item.id] || [];
   const communications = state.communications[item.id] || [];
   const lease = item.captured.find(([key]) => key.toLowerCase().includes("lease"))?.[1] || "Missing";
-  const totalInfo = item.missingFull.length + item.captured.length;
+  const totalInfo = missingItems.length + item.captured.length;
   const summary = state.expandedSummary
     ? `${item.summary} Recommended next step: confirm ${item.missingFull.slice(0, 3).join(", ").toLowerCase()} before committing labor or recycling assumptions.`
     : item.summary;
@@ -26,7 +38,7 @@ export function detailScreen({ state, selected }) {
       <button data-action="expand-summary">${state.expandedSummary ? "Show less⌃" : "Show more⌄"}</button>
     </section>
     <section class="detail-section">
-      <div class="section-head tight"><h3>Missing Information</h3><span class="count-pill">${item.missingFull.length} of ${totalInfo || item.missingFull.length}</span></div>
+      <div class="section-head tight"><h3>Missing Information</h3><span class="count-pill">${item.missingCount ?? item.missingFull.length} of ${totalInfo || item.missingFull.length}</span></div>
       <ul class="check-list">${missingRows}${capturedRows}</ul>
     </section>
     <section class="detail-section">

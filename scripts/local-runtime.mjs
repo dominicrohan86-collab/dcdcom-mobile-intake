@@ -4,17 +4,42 @@ import { dirname, resolve } from "node:path";
 
 export async function createLocalEnv(options = {}) {
   const root = resolve(options.root || ".");
+  const envRoot = resolve(options.envRoot || root);
   const localRoot = resolve(root, ".local");
+  const localEnv = await readLocalEnv(resolve(envRoot, ".env.local"));
   await mkdir(localRoot, { recursive: true });
   return {
     DB: new LocalD1(resolve(localRoot, "dcdcom.sqlite")),
     FILES: new LocalR2(resolve(localRoot, "r2")),
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
-    OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5.5",
-    EMAIL_PROVIDER_WEBHOOK: process.env.EMAIL_PROVIDER_WEBHOOK || "",
-    SMS_PROVIDER_WEBHOOK: process.env.SMS_PROVIDER_WEBHOOK || "",
-    COMMUNICATION_PROVIDER_WEBHOOK: process.env.COMMUNICATION_PROVIDER_WEBHOOK || ""
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY || localEnv.OPENAI_API_KEY || "",
+    OPENAI_MODEL: process.env.OPENAI_MODEL || localEnv.OPENAI_MODEL || "gpt-5.5",
+    EMAIL_PROVIDER_WEBHOOK: process.env.EMAIL_PROVIDER_WEBHOOK || localEnv.EMAIL_PROVIDER_WEBHOOK || "",
+    SMS_PROVIDER_WEBHOOK: process.env.SMS_PROVIDER_WEBHOOK || localEnv.SMS_PROVIDER_WEBHOOK || "",
+    COMMUNICATION_PROVIDER_WEBHOOK: process.env.COMMUNICATION_PROVIDER_WEBHOOK || localEnv.COMMUNICATION_PROVIDER_WEBHOOK || ""
   };
+}
+
+async function readLocalEnv(path) {
+  try {
+    const contents = await readFile(path, "utf8");
+    return Object.fromEntries(
+      contents
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith("#"))
+        .map((line) => {
+          const equalsIndex = line.indexOf("=");
+          if (equalsIndex === -1) return null;
+          const key = line.slice(0, equalsIndex).trim();
+          const value = line.slice(equalsIndex + 1).trim().replace(/^['"]|['"]$/g, "");
+          return key ? [key, value] : null;
+        })
+        .filter(Boolean)
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw error;
+  }
 }
 
 class LocalD1 {

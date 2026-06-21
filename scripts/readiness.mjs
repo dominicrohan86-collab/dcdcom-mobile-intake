@@ -7,7 +7,7 @@ import { createLocalEnv } from "./local-runtime.mjs";
 const root = await mkdtemp(join(tmpdir(), "dcdcom-readiness-"));
 
 try {
-  const env = await createLocalEnv({ root });
+  const env = await createLocalEnv({ root, envRoot: process.cwd() });
   const response = await handleApi(
     new Request("http://local.test/api/readiness", {
       headers: { "oai-authenticated-user-email": "alex@dcdcom.com" }

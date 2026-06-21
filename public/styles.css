@@ -1005,6 +1005,35 @@ button:disabled {
   font-size: 13px;
 }
 
+.check-list .missing-row {
+  grid-template-columns: 20px minmax(0, 1fr) max-content;
+  min-height: 48px;
+  padding-block: 7px;
+}
+
+.missing-row b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.missing-row .missing-actions {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.missing-actions button {
+  min-height: 28px;
+  border: 1px solid #cfdaf0;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 8px;
+}
+
 .check-list li:last-child {
   border-bottom: 0;
 }
@@ -1688,6 +1717,26 @@ button:disabled {
   accent-color: var(--blue);
 }
 
+.visit-summary {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfe;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.visit-summary b {
+  text-transform: capitalize;
+}
+
+.visit-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .scope-preview {
   padding: 13px;
 }
@@ -1743,11 +1792,18 @@ button:disabled {
   border-bottom: 0;
 }
 
-.edit-form input {
+.edit-form input,
+.edit-form textarea {
   border: 0;
   color: var(--ink);
   outline: 0;
   font-size: 15px;
+}
+
+.edit-form textarea {
+  min-height: 220px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .confidence-list div {

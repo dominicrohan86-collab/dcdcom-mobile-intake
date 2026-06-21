@@ -50,7 +50,7 @@ export async function getInquiryDetail(env, accountId, inquiryId) {
     WHERE i.account_id = ? AND i.id = ?
   `, [accountId, inquiryId]);
   if (!inquiry) return null;
-  const [fields, missing, summaries, activity, documents, files, communications] = await Promise.all([
+  const [fields, missing, summaries, activity, documents, files, communications, siteVisits] = await Promise.all([
     all(env, "SELECT * FROM extracted_fields WHERE inquiry_id = ? ORDER BY field_key", [inquiryId]),
     all(env, "SELECT * FROM missing_requirements WHERE inquiry_id = ? ORDER BY severity DESC, category, label", [inquiryId]),
     all(env, "SELECT * FROM ai_summaries WHERE inquiry_id = ? ORDER BY generated_at DESC", [inquiryId]),
@@ -66,7 +66,8 @@ export async function getInquiryDetail(env, accountId, inquiryId) {
       ORDER BY d.updated_at DESC
     `, [inquiryId]),
     all(env, "SELECT id, file_name, content_type, size_bytes, category, uploaded_at FROM files WHERE inquiry_id = ? ORDER BY uploaded_at DESC", [inquiryId]),
-    listCommunications(env, accountId, inquiryId)
+    listCommunications(env, accountId, inquiryId),
+    listSiteVisits(env, accountId, inquiryId)
   ]);
   return {
     inquiry,
@@ -76,7 +77,8 @@ export async function getInquiryDetail(env, accountId, inquiryId) {
     activity: activity.results || [],
     documents: documents.results || [],
     files: files.results || [],
-    communications
+    communications,
+    siteVisits
   };
 }
 
@@ -116,6 +118,21 @@ export async function updateUserPreferences(env, accountId, userId, payload) {
   `, [settings.dailyDigest ? "daily" : "none", JSON.stringify(settings), userId]);
   const after = await getUserPreferences(env, userId);
   await createAuditLog(env, accountId, userId, "user_preferences", userId, "preferences.updated", before, after);
+  return after;
+}
+
+export async function updateUserProfile(env, accountId, userId, payload) {
+  const before = await first(env, "SELECT id, account_id, email, full_name, role, avatar_url, is_active FROM users WHERE account_id = ? AND id = ?", [accountId, userId]);
+  if (!before) return null;
+  const fullName = String(payload.fullName || before.full_name).trim() || before.full_name;
+  const avatarUrl = payload.avatarUrl === undefined ? before.avatar_url : String(payload.avatarUrl || "").trim() || null;
+  await run(env, `
+    UPDATE users
+    SET full_name = ?, avatar_url = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE account_id = ? AND id = ?
+  `, [fullName, avatarUrl, accountId, userId]);
+  const after = await first(env, "SELECT id, account_id, email, full_name, role, avatar_url, is_active FROM users WHERE account_id = ? AND id = ?", [accountId, userId]);
+  await createAuditLog(env, accountId, userId, "user", userId, "profile.updated", before, after);
   return after;
 }
 
@@ -206,6 +223,67 @@ export async function updateMissingRequirement(env, accountId, requirementId, us
   const after = { ...before, status };
   await createActivity(env, accountId, before.inquiry_id, userId, "missing_requirement.updated", `${before.label} marked ${status}`, { requirementId, from: before.status, to: status });
   await createAuditLog(env, accountId, userId, "missing_requirement", requirementId, "status.updated", before, after);
+  return after;
+}
+
+export async function updateInquiryDetails(env, accountId, inquiryId, userId, payload) {
+  const before = await first(env, `
+    SELECT i.id, i.title, i.contact_id, i.site_id,
+      ct.full_name, ct.email, ct.phone,
+      s.access_notes
+    FROM inquiries i
+    LEFT JOIN contacts ct ON ct.id = i.contact_id
+    LEFT JOIN sites s ON s.id = i.site_id
+    WHERE i.account_id = ? AND i.id = ?
+    LIMIT 1
+  `, [accountId, inquiryId]);
+  if (!before) return null;
+
+  const contactName = String(payload.contact || before.full_name || "Unknown Contact").trim() || "Unknown Contact";
+  const email = String(payload.email || before.email || "").trim() || null;
+  const phone = String(payload.phone || before.phone || "").trim() || null;
+  const accessNotes = String(payload.accessNotes || before.access_notes || "").trim() || null;
+
+  const statements = [];
+  if (before.contact_id) {
+    statements.push(env.DB.prepare(`
+      UPDATE contacts
+      SET full_name = ?, email = ?, phone = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(contactName, email, phone, before.contact_id));
+  }
+  if (before.site_id) {
+    statements.push(env.DB.prepare(`
+      UPDATE sites
+      SET access_notes = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(accessNotes, before.site_id));
+  }
+  statements.push(env.DB.prepare("UPDATE inquiries SET updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(inquiryId));
+  if (statements.length) await env.DB.batch(statements);
+
+  await upsertExtractedField(env, inquiryId, "contact_name", "Contact", contactName, 100);
+  await upsertExtractedField(env, inquiryId, "contact_email", "Email", email, 100);
+  await upsertExtractedField(env, inquiryId, "contact_phone", "Phone", phone, 100);
+  await upsertExtractedField(env, inquiryId, "access_requirements", "Site access requirements", accessNotes, 100);
+
+  const after = await first(env, `
+    SELECT i.id, i.title, i.contact_id, i.site_id,
+      ct.full_name, ct.email, ct.phone,
+      s.access_notes
+    FROM inquiries i
+    LEFT JOIN contacts ct ON ct.id = i.contact_id
+    LEFT JOIN sites s ON s.id = i.site_id
+    WHERE i.account_id = ? AND i.id = ?
+    LIMIT 1
+  `, [accountId, inquiryId]);
+  await createActivity(env, accountId, inquiryId, userId, "inquiry.details_updated", `Updated extracted details for ${before.title}`, {
+    contactName,
+    email,
+    phone,
+    accessNotes
+  });
+  await createAuditLog(env, accountId, userId, "inquiry", inquiryId, "details.updated", before, after);
   return after;
 }
 
@@ -533,6 +611,114 @@ export async function saveDocumentDraft(env, accountId, inquiryId, userId, paylo
   };
 }
 
+export async function submitProposalForReview(env, accountId, inquiryId, userId, payload = {}) {
+  const inquiry = await first(env, "SELECT id, title, status FROM inquiries WHERE account_id = ? AND id = ?", [accountId, inquiryId]);
+  if (!inquiry) return null;
+  const document = await first(env, `
+    SELECT
+      d.id, d.title, d.status, d.current_version,
+      v.id AS version_id, v.subject, v.body, v.metadata_json
+    FROM documents d
+    LEFT JOIN document_versions v ON v.document_id = d.id AND v.version = d.current_version
+    WHERE d.inquiry_id = ? AND d.document_type = 'proposal'
+      AND (? IS NULL OR d.id = ?)
+    ORDER BY d.updated_at DESC
+    LIMIT 1
+  `, [inquiryId, payload.documentId || null, payload.documentId || null]);
+  if (!document) return null;
+
+  const before = {
+    inquiryStatus: inquiry.status,
+    documentStatus: document.status
+  };
+  const metadata = safeJson(document.metadata_json) || {};
+  const estimate = metadata.estimate || {};
+  await env.DB.batch([
+    env.DB.prepare("UPDATE documents SET status = 'review', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(document.id),
+    env.DB.prepare("UPDATE inquiries SET status = 'review', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(inquiryId)
+  ]);
+
+  let proposal = await first(env, "SELECT * FROM proposals WHERE document_id = ? ORDER BY created_at DESC LIMIT 1", [document.id]);
+  if (proposal) {
+    await run(env, "UPDATE proposals SET status = 'review', requires_approval = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [proposal.id]);
+    proposal = await first(env, "SELECT * FROM proposals WHERE id = ?", [proposal.id]);
+  } else {
+    const proposalId = `prop_${crypto.randomUUID()}`;
+    await run(env, `
+      INSERT INTO proposals (id, inquiry_id, document_id, status, price_low_cents, price_high_cents, requires_approval)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [proposalId, inquiryId, document.id, "review", estimate.lowCents || null, estimate.highCents || null, 1]);
+    proposal = await first(env, "SELECT * FROM proposals WHERE id = ?", [proposalId]);
+  }
+
+  await createActivity(env, accountId, inquiryId, userId, "proposal.submitted_for_review", `Submitted proposal for ${inquiry.title} to internal review`, {
+    documentId: document.id,
+    versionId: document.version_id,
+    proposalId: proposal.id
+  });
+  await createAuditLog(env, accountId, userId, "proposal", proposal.id, "proposal.submitted_for_review", before, {
+    inquiryStatus: "review",
+    documentStatus: "review",
+    proposalStatus: proposal.status
+  });
+  return {
+    document: {
+      documentId: document.id,
+      versionId: document.version_id,
+      documentType: "proposal",
+      title: document.title,
+      subject: document.subject || null,
+      body: document.body || "",
+      metadata,
+      currentVersion: document.current_version,
+      status: "review"
+    },
+    proposal,
+    inquiry: { ...inquiry, status: "review" }
+  };
+}
+
+export async function saveEstimateForInquiry(env, accountId, inquiryId, userId, payload = {}) {
+  const inquiry = await first(env, "SELECT id, title, status FROM inquiries WHERE account_id = ? AND id = ?", [accountId, inquiryId]);
+  if (!inquiry) return null;
+  const lowCents = Number(payload.lowCents || 0);
+  const highCents = Number(payload.highCents || 0);
+  if (!Number.isFinite(lowCents) || !Number.isFinite(highCents) || lowCents <= 0 || highCents <= 0 || highCents < lowCents) {
+    throw new Error("A valid estimate range is required.");
+  }
+  const latest = await first(env, "SELECT MAX(version) AS version FROM estimates WHERE inquiry_id = ?", [inquiryId]);
+  const version = Number(latest?.version || 0) + 1;
+  const estimateId = `est_${crypto.randomUUID()}`;
+  const assumptions = String(payload.assumptions || "Estimate saved from mobile estimate workflow.").slice(0, 2000);
+  await run(env, `
+    INSERT INTO estimates (id, inquiry_id, version, status, low_cents, high_cents, assumptions, created_by_user_id, approved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `, [estimateId, inquiryId, version, "approved", Math.round(lowCents), Math.round(highCents), assumptions, userId]);
+
+  const lines = normalizeEstimateLines(payload.lineItems, lowCents);
+  if (lines.length) {
+    await env.DB.batch(lines.map((line) => env.DB.prepare(`
+      INSERT INTO estimate_lines (id, estimate_id, line_type, description, quantity, unit, unit_cost_cents, total_cents)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(`line_${crypto.randomUUID()}`, estimateId, line.lineType, line.description, line.quantity, line.unit, line.unitCostCents, Math.round(line.quantity * line.unitCostCents))));
+  }
+
+  await run(env, `
+    UPDATE inquiries
+    SET estimated_low_cents = ?, estimated_high_cents = ?, status = 'estimating', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [Math.round(lowCents), Math.round(highCents), inquiryId]);
+  const estimate = await first(env, "SELECT * FROM estimates WHERE id = ?", [estimateId]);
+  await createActivity(env, accountId, inquiryId, userId, "estimate.saved", `Saved estimate for ${inquiry.title}`, {
+    estimateId,
+    version,
+    lowCents: Math.round(lowCents),
+    highCents: Math.round(highCents)
+  });
+  await createAuditLog(env, accountId, userId, "estimate", estimateId, "estimate.saved", null, estimate);
+  return { estimate, lineItems: lines, inquiry: { ...inquiry, status: "estimating", estimated_low_cents: Math.round(lowCents), estimated_high_cents: Math.round(highCents) } };
+}
+
 export async function listCommunications(env, accountId, inquiryId) {
   const result = await all(env, `
     SELECT c.*
@@ -693,6 +879,145 @@ export async function sendOutboundCommunication(env, accountId, inquiryId, userI
   }
 }
 
+export async function listSiteVisits(env, accountId, inquiryId) {
+  const visits = await all(env, `
+    SELECT v.*
+    FROM site_visits v
+    INNER JOIN inquiries i ON i.id = v.inquiry_id
+    WHERE i.account_id = ? AND v.inquiry_id = ?
+    ORDER BY
+      CASE v.status WHEN 'scheduled' THEN 0 WHEN 'needed' THEN 1 WHEN 'complete' THEN 2 ELSE 3 END,
+      COALESCE(v.scheduled_start, v.created_at) DESC
+  `, [accountId, inquiryId]);
+  const rows = visits.results || [];
+  if (!rows.length) return [];
+  const items = await all(env, `
+    SELECT ci.*
+    FROM checklist_items ci
+    INNER JOIN site_visits v ON v.id = ci.site_visit_id
+    INNER JOIN inquiries i ON i.id = v.inquiry_id
+    WHERE i.account_id = ? AND v.inquiry_id = ?
+    ORDER BY ci.label
+  `, [accountId, inquiryId]);
+  const byVisit = new Map(rows.map((visit) => [visit.id, { ...visit, checklistItems: [] }]));
+  for (const item of items.results || []) {
+    byVisit.get(item.site_visit_id)?.checklistItems.push(item);
+  }
+  return [...byVisit.values()];
+}
+
+export async function scheduleSiteVisit(env, accountId, inquiryId, userId, payload = {}) {
+  const inquiry = await first(env, `
+    SELECT i.id, i.title, i.site_id
+    FROM inquiries i
+    WHERE i.account_id = ? AND i.id = ?
+    LIMIT 1
+  `, [accountId, inquiryId]);
+  if (!inquiry) return null;
+  const existing = await first(env, "SELECT * FROM site_visits WHERE inquiry_id = ? AND status IN ('needed','scheduled') ORDER BY created_at DESC LIMIT 1", [inquiryId]);
+  const now = new Date().toISOString();
+  const scheduledStart = payload.scheduledStart || defaultSiteVisitStart();
+  const scheduledEnd = payload.scheduledEnd || addHours(scheduledStart, 1);
+  const notes = payload.notes || "Site visit scheduled from mobile workflow.";
+  const visitId = existing?.id || `visit_${crypto.randomUUID()}`;
+
+  if (existing) {
+    await run(env, `
+      UPDATE site_visits
+      SET scheduled_start = ?, scheduled_end = ?, status = 'scheduled', assigned_user_id = ?, notes = ?, updated_at = ?
+      WHERE id = ?
+    `, [scheduledStart, scheduledEnd, userId, notes, now, visitId]);
+  } else {
+    await run(env, `
+      INSERT INTO site_visits (id, inquiry_id, site_id, scheduled_start, scheduled_end, status, assigned_user_id, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [visitId, inquiryId, inquiry.site_id || null, scheduledStart, scheduledEnd, "scheduled", userId, notes, now, now]);
+  }
+
+  await ensureChecklistItems(env, visitId, payload.checklist || defaultChecklistLabels());
+  await run(env, "UPDATE inquiries SET status = 'site_visit', updated_at = ? WHERE id = ?", [now, inquiryId]);
+  const calendarSync = await queueCalendarHold(env, accountId, inquiryId, userId, {
+    visitId,
+    title: `Site visit: ${inquiry.title}`,
+    scheduledStart,
+    scheduledEnd
+  });
+  const siteVisit = await first(env, "SELECT * FROM site_visits WHERE id = ?", [visitId]);
+  await createActivity(env, accountId, inquiryId, userId, "site_visit.scheduled", `Scheduled site visit for ${inquiry.title}`, {
+    visitId,
+    scheduledStart,
+    scheduledEnd,
+    calendarSyncId: calendarSync?.id
+  });
+  await createAuditLog(env, accountId, userId, "site_visit", visitId, existing ? "site_visit.rescheduled" : "site_visit.scheduled", existing, siteVisit);
+  return {
+    siteVisit: {
+      ...siteVisit,
+      checklistItems: (await listSiteVisits(env, accountId, inquiryId)).find((visit) => visit.id === visitId)?.checklistItems || []
+    },
+    calendarSync
+  };
+}
+
+export async function updateChecklistItem(env, accountId, itemId, userId, status, notes = null) {
+  const before = await first(env, `
+    SELECT ci.*, v.inquiry_id, i.account_id, i.title
+    FROM checklist_items ci
+    INNER JOIN site_visits v ON v.id = ci.site_visit_id
+    INNER JOIN inquiries i ON i.id = v.inquiry_id
+    WHERE i.account_id = ? AND ci.id = ?
+    LIMIT 1
+  `, [accountId, itemId]);
+  if (!before) return null;
+  await run(env, `
+    UPDATE checklist_items
+    SET status = ?, notes = COALESCE(?, notes), completed_by_user_id = CASE WHEN ? = 'done' THEN ? ELSE completed_by_user_id END,
+        completed_at = CASE WHEN ? = 'done' THEN CURRENT_TIMESTAMP ELSE completed_at END
+    WHERE id = ?
+  `, [status, notes, status, userId, status, itemId]);
+  const after = await first(env, "SELECT * FROM checklist_items WHERE id = ?", [itemId]);
+  await createActivity(env, accountId, before.inquiry_id, userId, "checklist_item.updated", `${before.label} marked ${status}`, {
+    checklistItemId: itemId,
+    from: before.status,
+    to: status
+  });
+  await createAuditLog(env, accountId, userId, "checklist_item", itemId, "checklist_item.updated", before, after);
+  await completeVisitIfReady(env, before.site_visit_id);
+  return after;
+}
+
+async function ensureChecklistItems(env, visitId, labels) {
+  const existing = await all(env, "SELECT item_key FROM checklist_items WHERE site_visit_id = ?", [visitId]);
+  const keys = new Set((existing.results || []).map((item) => item.item_key));
+  const statements = labels.map((label) => {
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 42) || `item_${crypto.randomUUID()}`;
+    if (keys.has(key)) return null;
+    return env.DB.prepare(`
+      INSERT OR IGNORE INTO checklist_items (id, site_visit_id, item_key, label, status)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(`check_${crypto.randomUUID()}`, visitId, key, label, "open");
+  }).filter(Boolean);
+  if (statements.length) await env.DB.batch(statements);
+}
+
+async function queueCalendarHold(env, accountId, inquiryId, userId, payload) {
+  const integration = await createDefaultIntegration(env, accountId, userId, "calendar");
+  const syncId = `sync_${crypto.randomUUID()}`;
+  const externalId = `calendar_hold_${payload.visitId}`;
+  await run(env, `
+    INSERT INTO sync_events (id, integration_id, inquiry_id, status, operation, external_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [syncId, integration.id, inquiryId, "queued", "calendar_hold", externalId]);
+  return { id: syncId, provider: "calendar", externalId, status: "queued" };
+}
+
+async function completeVisitIfReady(env, visitId) {
+  const open = await first(env, "SELECT COUNT(*) AS count FROM checklist_items WHERE site_visit_id = ? AND status = 'open'", [visitId]);
+  if (Number(open?.count || 0) === 0) {
+    await run(env, "UPDATE site_visits SET status = 'complete', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status != 'cancelled'", [visitId]);
+  }
+}
+
 async function createDeliveryAttempt(env, communicationId, payload) {
   const latest = await first(env, "SELECT MAX(attempt_number) AS attempt FROM communication_delivery_attempts WHERE communication_id = ?", [communicationId]);
   const id = `delivery_${crypto.randomUUID()}`;
@@ -792,6 +1117,25 @@ async function persistExtractedFields(env, inquiryId, sourceId, extraction) {
     INSERT OR REPLACE INTO extracted_fields (id, inquiry_id, field_key, label, value_text, confidence_score, source_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).bind(`field_${crypto.randomUUID()}`, inquiryId, key, label, value, extraction.confidenceScore, sourceId)));
+}
+
+async function upsertExtractedField(env, inquiryId, key, label, value, confidenceScore = 100) {
+  if (value === null || value === undefined || value === "") return;
+  const existing = await first(env, "SELECT id FROM extracted_fields WHERE inquiry_id = ? AND field_key = ? LIMIT 1", [inquiryId, key]);
+  if (existing?.id) {
+    await run(env, `
+      UPDATE extracted_fields
+      SET label = ?, value_text = ?, confidence_score = ?, is_verified = 1, verified_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [label, value, confidenceScore, existing.id]);
+    return existing.id;
+  }
+  const id = `field_${crypto.randomUUID()}`;
+  await run(env, `
+    INSERT INTO extracted_fields (id, inquiry_id, field_key, label, value_text, confidence_score, is_verified, verified_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `, [id, inquiryId, key, label, value, confidenceScore, 1]);
+  return id;
 }
 
 async function persistMissingRequirements(env, inquiryId, requirements) {
@@ -920,6 +1264,51 @@ function communicationWebhook(env, channel) {
   if (channel === "email") return env.EMAIL_PROVIDER_WEBHOOK || env.COMMUNICATION_PROVIDER_WEBHOOK || "";
   if (channel === "text") return env.SMS_PROVIDER_WEBHOOK || env.COMMUNICATION_PROVIDER_WEBHOOK || "";
   return "";
+}
+
+function defaultSiteVisitStart() {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + 2);
+  date.setUTCHours(14, 0, 0, 0);
+  return date.toISOString();
+}
+
+function addHours(value, hours) {
+  const date = new Date(value);
+  date.setUTCHours(date.getUTCHours() + hours);
+  return date.toISOString();
+}
+
+function defaultChecklistLabels() {
+  return [
+    "Confirm site access window",
+    "Capture room and equipment photos",
+    "Validate rack and equipment inventory",
+    "Confirm electrical disconnect and utility shutoff",
+    "Document escort, security, and loading dock requirements"
+  ];
+}
+
+function normalizeEstimateLines(lines, lowCents) {
+  const fallback = [
+    { lineType: "labor", description: "Labor", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * 0.42) },
+    { lineType: "logistics", description: "Logistics", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * 0.18) },
+    { lineType: "recycling", description: "Recycling", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * 0.16) },
+    { lineType: "contingency", description: "Contingency", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * 0.1) }
+  ];
+  const source = Array.isArray(lines) && lines.length ? lines : fallback;
+  return source.slice(0, 24).map((line) => ({
+    lineType: estimateLineType(line.lineType),
+    description: String(line.description || "Estimate line item").slice(0, 240),
+    quantity: Number(line.quantity || 1),
+    unit: String(line.unit || "each").slice(0, 40),
+    unitCostCents: Math.round(Number(line.unitCostCents || 0))
+  })).filter((line) => Number.isFinite(line.quantity) && Number.isFinite(line.unitCostCents) && line.unitCostCents >= 0);
+}
+
+function estimateLineType(type) {
+  const normalized = String(type || "other").toLowerCase();
+  return ["labor", "logistics", "recycling", "equipment", "subcontractor", "contingency", "other"].includes(normalized) ? normalized : "other";
 }
 
 function safeJson(text) {

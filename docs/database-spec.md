@@ -49,10 +49,17 @@ The Worker now routes `/api/*` before static assets:
 - `POST /api/inquiries/from-source` runs extraction and persists the normalized inquiry, source, fields, missing requirements, summary, AI run, and activity event.
 - `POST /api/inquiries/:id/generate` creates database-backed follow-up emails, scope documents, site checklists, estimates, and proposals from inquiry context.
 - `POST /api/inquiries/:id/documents` saves manually edited drafts as versioned documents.
+- `POST /api/inquiries/:id/estimate` saves an approved estimate version, line items, assumptions, and the current opportunity range.
+- `PATCH /api/profile` updates the authenticated user's profile record.
+- `PATCH /api/inquiries/:id/details` updates extracted contact and site access details in the normalized customer records.
+- `POST /api/inquiries/:id/proposal-review` submits the current proposal document version to internal review without regenerating content.
 - `GET/POST /api/inquiries/:id/communications` lists or logs customer communications.
 - `POST /api/inquiries/:id/send-follow-up` saves the email draft version and queues/sends outbound provider delivery.
 - `GET /api/inquiries/:id/files` lists file metadata attached to the inquiry.
 - `POST /api/inquiries/:id/files` stores the file body in R2 and searchable metadata in D1.
+- `PATCH /api/missing-requirements/:id` updates missing-info status to requested, received, or waived.
+- `GET/POST /api/inquiries/:id/site-visits` lists or schedules site visits and their checklist items.
+- `PATCH /api/checklist-items/:id` updates field checklist item status.
 - `GET /api/files/:id` streams an authorized file from R2.
 - `PUT /api/settings` saves notification preferences to `user_preferences`.
 - `GET/POST /api/integrations` lists and connects persisted integration records.
@@ -102,10 +109,15 @@ The mobile UI hydrates queue/detail data from the Worker when the local or hoste
 1. A call, email, text, manual note, photo/OCR result, or web form creates an `inquiry`, an `inquiry_sources` row, and an inbound `communications` row.
 2. AI extraction stores the model execution in `ai_runs`, normalized data in `extracted_fields`, open questions in `missing_requirements`, and the plain-language explanation in `ai_summaries`.
 3. Photos, floor plans, equipment lists, contracts, and attachments are stored in R2 under account/inquiry scoped keys, while `files` keeps searchable metadata and authorization context.
-4. The app can create a follow-up email, site visit checklist, estimate, proposal, and related document versions without losing the original raw customer text. Generated artifacts are stored in `documents`, `document_versions`, `estimates`, `estimate_lines`, `site_visits`, `checklist_items`, `proposals`, and `proposal_sections` as appropriate.
-5. Follow-up emails can be queued or sent through provider webhooks. Without a configured provider, the app records a queued communication and delivery-attempt reason instead of falsely marking it sent.
-6. Server-side write endpoints check workspace user roles before mutation. Estimators, project managers, sales users, and admins can perform normal workflow writes; integration connection is limited to admins and project managers.
-7. Every user action can be appended to `activity_events`; sensitive or compliance-relevant edits can also be mirrored into `audit_log`.
+4. Extracted contact and site access edits update the normalized `contacts`, `sites`, and `extracted_fields` records rather than only local UI state.
+5. Missing requirements can move through requested, received, and waived states so the estimator can see which pricing blockers remain.
+6. The app can create a follow-up email, site visit checklist, estimate, proposal, and related document versions without losing the original raw customer text. Generated artifacts are stored in `documents`, `document_versions`, `estimates`, `estimate_lines`, `site_visits`, `checklist_items`, `proposals`, and `proposal_sections` as appropriate.
+7. Estimate approval saves a new `estimates` version with normalized `estimate_lines`, updates the inquiry's current high/low range, and records activity/audit history.
+8. Proposal edits save new `document_versions` for the proposal document, and internal review submission uses the current proposal version instead of regenerating or overwriting user edits.
+9. Site visits can be scheduled with checklist items and a queued calendar hold, then checklist completion is stored item by item.
+10. Follow-up emails can be queued or sent through provider webhooks. Without a configured provider, the app records a queued communication and delivery-attempt reason instead of falsely marking it sent.
+11. Server-side write endpoints check workspace user roles before mutation. Estimators, project managers, sales users, and admins can perform normal workflow writes; integration connection is limited to admins and project managers.
+12. Every user action can be appended to `activity_events`; sensitive or compliance-relevant edits can also be mirrored into `audit_log`.
 
 ## Required Indexes
 
@@ -138,6 +150,6 @@ The migration includes indexes for:
 - `OPENAI_API_KEY` and `OPENAI_MODEL` are read from the shell environment if present.
 - `EMAIL_PROVIDER_WEBHOOK`, `SMS_PROVIDER_WEBHOOK`, and `COMMUNICATION_PROVIDER_WEBHOOK` are optional provider adapter URLs for outbound delivery.
 
-`npm run test:api` exercises the same API handler against this local runtime and covers the core customer flow from inbound intake through generated proposal, document versioning, queued follow-up delivery, communication timeline readback, file upload/download, settings, integration sync, and workflow status update.
+`npm run test:api` exercises the same API handler against this local runtime and covers the core customer flow from inbound intake through profile updates, extracted-detail edits, generated/edited/review-submitted proposals, document versioning, queued follow-up delivery, communication timeline readback, missing-info resolution, site visit scheduling, checklist completion, file upload/download, settings, integration sync, and workflow status update.
 
 `npm run readiness` calls `/api/readiness` through the local runtime and prints blocking checks and warning-only checks. In local development, a missing `OPENAI_API_KEY` is warning-only because deterministic fallback AI remains available. In production, configure the OpenAI key before customer use.

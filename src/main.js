@@ -1,7 +1,7 @@
 import { emailText } from "./lib/drafts.js";
 import { extractFromText } from "./lib/extraction.js";
-import { analyzeIntakePreview, bootstrapWorkspace, connectIntegration, generateInquiryWorkProduct, getInquiryDetail, saveInquiryDocument, saveInquiryFromSource, saveSettings, sendFollowUpEmail, syncInquiry, updateInquiryStatus, uploadInquiryFile } from "./lib/api-client.js";
-import { scopeBullets } from "./lib/workflows.js";
+import { analyzeIntakePreview, bootstrapWorkspace, connectIntegration, generateInquiryWorkProduct, getInquiryDetail, saveInquiryDocument, saveInquiryEstimate, saveInquiryFromSource, saveProfile, saveSettings, scheduleInquirySiteVisit, sendFollowUpEmail, submitProposalReview, syncInquiry, updateInquiryDetails, updateInquiryStatus, updateMissingRequirement, updateSiteChecklistItem, uploadInquiryFile } from "./lib/api-client.js";
+import { estimateFor, scopeBullets } from "./lib/workflows.js";
 import { inquiries } from "./state/inquiries.js";
 import { state } from "./state/app-state.js";
 import { actionPanel } from "./ui/action-panel.js";
@@ -48,6 +48,7 @@ async function hydrateFromApi() {
     if (Array.isArray(boot.inquiries) && boot.inquiries.length) {
       inquiries.splice(0, inquiries.length, ...boot.inquiries.map(inquiryFromApiRow));
       if (!inquiries.some((item) => item.id === state.selectedId)) state.selectedId = inquiries[0].id;
+      state.user = boot.user || state.user;
       state.preferences = boot.preferences || state.preferences;
       state.integrations = boot.integrations || state.integrations;
       addActivity("Loaded live D1 inquiry queue");
@@ -67,6 +68,7 @@ async function refreshInquiryDetail(inquiryId) {
     else inquiries.unshift(next);
     state.uploadedFiles[inquiryId] = (detail.files || []).map(publicFileFromApi);
     state.communications[inquiryId] = (detail.communications || []).map(publicCommunicationFromApi);
+    state.siteVisits[inquiryId] = (detail.siteVisits || []).map(publicSiteVisitFromApi);
     hydrateGeneratedProducts(inquiryId, detail.documents || []);
     render();
   } catch {
@@ -424,9 +426,7 @@ async function handleAction(button) {
     return setScreen("proposal", { savedNotice: result ? "Proposal draft regenerated and saved for review." : state.savedNotice });
   }
   if (action === "send-review") {
-    const result = await generateForSelected("proposal", "Proposal sent to internal review queue.");
-    await persistStatus("review");
-    if (!result) addActivity(`Sent ${selected().title} proposal to local review queue`);
+    const result = await submitCurrentProposalForReview();
     return setScreen("proposal", { savedNotice: result ? "Proposal sent to internal review queue." : state.savedNotice });
   }
   if (action === "expand-summary") return setScreen("detail", { expandedSummary: !state.expandedSummary });
@@ -435,7 +435,7 @@ async function handleAction(button) {
     return render();
   }
   if (action === "proposal-edit") {
-    state.modal = "edit-details";
+    state.modal = "proposal-edit";
     return render();
   }
   if (action === "estimate") {
@@ -445,6 +445,7 @@ async function handleAction(button) {
   }
   if (action === "site-check") {
     await generateForSelected("site_checklist", "Site visit checklist generated and saved.");
+    await refreshInquiryDetail(selected().id);
     state.modal = "site-check";
     return render();
   }
@@ -458,16 +459,23 @@ async function handleAction(button) {
     return render();
   }
   if (action === "save-estimate") {
-    await persistStatus("estimating");
-    addActivity(`Saved estimate range for ${selected().title}`);
-    state.savedNotice = "Estimate saved to the opportunity.";
+    await persistEstimate();
     state.modal = null;
     return render();
   }
   if (action === "complete-checklist") {
-    addActivity(`Updated site visit checklist for ${selected().title}`);
-    state.savedNotice = "Site visit checklist saved.";
+    await persistChecklist();
+    state.savedNotice = "Site visit checklist saved to the field workflow.";
     state.modal = null;
+    return render();
+  }
+  if (action === "schedule-site-visit") {
+    await persistSiteVisitSchedule();
+    state.modal = "site-check";
+    return render();
+  }
+  if (action === "missing-requested" || action === "missing-received" || action === "missing-waived") {
+    await persistMissingRequirement(button.dataset.requirementId, action.replace("missing-", ""));
     return render();
   }
   if (action === "copy-scope") {
@@ -479,17 +487,18 @@ async function handleAction(button) {
     state.modal = null;
     return render();
   }
+  if (action === "save-proposal-edits") {
+    await persistProposalEdits();
+    state.modal = null;
+    return setScreen("proposal", { savedNotice: "Proposal edits saved as a new version." });
+  }
   if (action === "save-details") {
-    const item = selected();
-    item.contact = app.querySelector("#editContact")?.value || item.contact;
-    item.email = app.querySelector("#editEmail")?.value || item.email;
-    item.phone = app.querySelector("#editPhone")?.value || item.phone;
-    const access = app.querySelector("#editAccess")?.value || "After hours";
-    const accessRow = item.captured.find(([key]) => key.includes("access"));
-    if (accessRow) accessRow[1] = access;
-    else item.captured.push(["Site access requirements", access]);
-    addActivity(`Updated extracted details for ${item.title}`);
-    state.savedNotice = "Extracted details updated.";
+    await persistInquiryDetails();
+    state.modal = null;
+    return render();
+  }
+  if (action === "save-profile") {
+    await persistProfile();
     state.modal = null;
     return render();
   }
@@ -607,6 +616,227 @@ async function persistStatus(status) {
   }
 }
 
+async function persistEstimate() {
+  const item = selected();
+  const payload = estimatePayloadFor(item);
+  try {
+    const result = await saveInquiryEstimate(item.id, payload);
+    item.value = formatShortRange(result.inquiry.estimated_low_cents, result.inquiry.estimated_high_cents);
+    item.range = formatRange(result.inquiry.estimated_low_cents, result.inquiry.estimated_high_cents);
+    item.status = result.inquiry.status;
+    item.next = "Prepare proposal";
+    addActivity(`Saved estimate range for ${item.title}`);
+    state.savedNotice = `Estimate v${result.estimate.version} approved and saved to the opportunity.`;
+  } catch (error) {
+    item.value = formatShortRange(payload.lowCents, payload.highCents);
+    item.range = formatRange(payload.lowCents, payload.highCents);
+    item.status = "estimating";
+    item.next = "Prepare proposal";
+    state.aiError = error.message;
+    state.savedNotice = "Estimate saved locally because the worker API is unavailable.";
+    addActivity(`Saved estimate locally for ${item.title}`);
+  }
+}
+
+async function persistMissingRequirement(requirementId, status) {
+  const item = selected();
+  const requirement = item.missingItems?.find((entry) => entry.id === requirementId);
+  if (!requirement) return;
+  try {
+    const result = await updateMissingRequirement(requirementId, status);
+    requirement.status = result.requirement.status;
+    item.missingCount = item.missingItems.filter((entry) => ["open", "requested"].includes(entry.status)).length;
+    item.missingFull = item.missingItems.filter((entry) => ["open", "requested"].includes(entry.status)).map((entry) => entry.label);
+    state.savedNotice = `${requirement.label} marked ${result.requirement.status}.`;
+    addActivity(`Updated missing requirement: ${requirement.label}`);
+  } catch (error) {
+    requirement.status = status;
+    state.aiError = error.message;
+    state.savedNotice = `${requirement.label} updated locally.`;
+    addActivity(`Updated ${requirement.label} locally`);
+  }
+}
+
+async function persistSiteVisitSchedule() {
+  const item = selected();
+  try {
+    const result = await scheduleInquirySiteVisit(item.id, {
+      notes: `Scheduled from mobile app for ${item.title}`
+    });
+    state.siteVisits[item.id] = [publicSiteVisitFromApi(result.siteVisit)];
+    state.savedNotice = result.calendarSync?.status === "queued" ? "Site visit scheduled and calendar hold queued." : "Site visit scheduled.";
+    addActivity(`Scheduled site visit for ${item.title}`);
+  } catch (error) {
+    state.aiError = error.message;
+    const start = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+    state.siteVisits[item.id] = [{
+      id: `local_visit_${Date.now()}`,
+      status: "scheduled",
+      scheduledStart: start,
+      scheduledEnd: new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString(),
+      notes: "Local site visit hold",
+      checklistItems: defaultLocalChecklist()
+    }];
+    state.savedNotice = "Site visit scheduled locally because the worker API is unavailable.";
+    addActivity(`Scheduled site visit locally for ${item.title}`);
+  }
+}
+
+async function persistChecklist() {
+  const item = selected();
+  const visits = state.siteVisits[item.id] || [];
+  const activeVisit = visits[0];
+  if (!activeVisit?.checklistItems?.length) {
+    await persistSiteVisitSchedule();
+    return;
+  }
+  const checked = new Set();
+  app.querySelectorAll("[data-checklist]:checked").forEach((input) => checked.add(input.dataset.checklist));
+  const updates = activeVisit.checklistItems.map(async (check) => {
+    const nextStatus = checked.has(check.id) ? "done" : "open";
+    if (nextStatus === check.status) return check;
+    try {
+      const result = await updateSiteChecklistItem(check.id, { status: nextStatus });
+      return { ...check, status: result.checklistItem.status };
+    } catch {
+      return { ...check, status: nextStatus };
+    }
+  });
+  activeVisit.checklistItems = await Promise.all(updates);
+  activeVisit.status = activeVisit.checklistItems.every((check) => check.status !== "open") ? "complete" : activeVisit.status;
+  addActivity(`Updated site visit checklist for ${item.title}`);
+}
+
+async function persistInquiryDetails() {
+  const item = selected();
+  const payload = {
+    contact: app.querySelector("#editContact")?.value || item.contact,
+    email: app.querySelector("#editEmail")?.value || item.email,
+    phone: app.querySelector("#editPhone")?.value || item.phone,
+    accessNotes: app.querySelector("#editAccess")?.value || "After hours"
+  };
+  try {
+    await updateInquiryDetails(item.id, payload);
+    applyDetailEdits(item, payload);
+    await refreshInquiryDetail(item.id);
+    state.savedNotice = "Extracted details saved to D1.";
+    addActivity(`Updated extracted details for ${item.title}`);
+  } catch (error) {
+    applyDetailEdits(item, payload);
+    state.aiError = error.message;
+    state.savedNotice = "Extracted details updated locally because the worker API is unavailable.";
+    addActivity(`Updated extracted details locally for ${item.title}`);
+  }
+}
+
+async function persistProfile() {
+  const fullName = app.querySelector("#profileName")?.value || state.user?.fullName || "Alex Morgan";
+  try {
+    const result = await saveProfile({ fullName });
+    state.user = result.user;
+    state.savedNotice = "Profile saved.";
+    addActivity("Updated account profile");
+  } catch (error) {
+    state.user = { ...(state.user || {}), fullName };
+    state.aiError = error.message;
+    state.savedNotice = "Profile updated locally because the worker API is unavailable.";
+    addActivity("Updated account profile locally");
+  }
+}
+
+async function persistProposalEdits() {
+  const item = selected();
+  const generated = state.generatedProducts[item.id]?.proposal;
+  const title = app.querySelector("#proposalTitle")?.value || generated?.title || `${item.title} Proposal`;
+  const body = app.querySelector("#proposalBody")?.value || generated?.body || "";
+  try {
+    const result = await saveInquiryDocument(item.id, {
+      documentId: generated?.documentId,
+      documentType: "proposal",
+      title,
+      subject: null,
+      body,
+      status: "draft",
+      metadata: {
+        confidenceScore: generated?.confidenceScore || item.confidence || 78,
+        approvalRequired: true,
+        missingRiskNotes: generated?.missingRiskNotes || item.missingFull || [],
+        nextActions: ["Review proposal edits", "Send for internal approval"],
+        estimate: generated?.estimate || {}
+      }
+    });
+    if (!state.generatedProducts[item.id]) state.generatedProducts[item.id] = {};
+    state.generatedProducts[item.id].proposal = productFromSavedDocument(result.document);
+    addActivity(`Saved proposal edits for ${item.title}`);
+    state.savedNotice = "Proposal edits saved as a new version.";
+  } catch (error) {
+    if (!state.generatedProducts[item.id]) state.generatedProducts[item.id] = {};
+    state.generatedProducts[item.id].proposal = {
+      ...(generated || {}),
+      documentType: "proposal",
+      title,
+      body,
+      sections: sectionsFromBody(body),
+      confidenceScore: generated?.confidenceScore || item.confidence || 78,
+      approvalRequired: true,
+      missingRiskNotes: generated?.missingRiskNotes || item.missingFull || [],
+      nextActions: generated?.nextActions || ["Review proposal edits"]
+    };
+    state.aiError = error.message;
+    state.savedNotice = "Proposal edits kept locally because the worker API is unavailable.";
+    addActivity(`Saved proposal edits locally for ${item.title}`);
+  }
+}
+
+async function submitCurrentProposalForReview() {
+  const item = selected();
+  let proposal = state.generatedProducts[item.id]?.proposal;
+  if (!proposal?.documentId) {
+    const generated = await generateForSelected("proposal", "Proposal draft generated before review submission.");
+    proposal = generated?.product || state.generatedProducts[item.id]?.proposal;
+  }
+  if (!proposal?.documentId) {
+    await persistStatus("review");
+    addActivity(`Sent ${item.title} proposal to local review queue`);
+    state.savedNotice = "Proposal moved to review locally because no saved proposal document was available.";
+    return null;
+  }
+  state.aiActionLoading = "proposal";
+  state.aiError = "";
+  state.savedNotice = "";
+  render();
+  try {
+    const result = await submitProposalReview(item.id, { documentId: proposal.documentId });
+    if (!state.generatedProducts[item.id]) state.generatedProducts[item.id] = {};
+    state.generatedProducts[item.id].proposal = {
+      ...productFromSavedDocument(result.document),
+      approvalRequired: true,
+      nextActions: proposal.nextActions || ["Internal review requested"]
+    };
+    addActivity(`Submitted ${item.title} proposal for internal review`);
+    state.savedNotice = "Proposal sent to internal review queue.";
+    return result;
+  } catch (error) {
+    state.aiError = error.message;
+    await persistStatus("review");
+    state.savedNotice = "Proposal moved to local review queue because the worker API is unavailable.";
+    addActivity(`Submitted ${item.title} proposal for local review`);
+    return null;
+  } finally {
+    state.aiActionLoading = "";
+    render();
+  }
+}
+
+function applyDetailEdits(item, payload) {
+  item.contact = payload.contact;
+  item.email = payload.email;
+  item.phone = payload.phone;
+  const accessRow = item.captured.find(([key]) => key.toLowerCase().includes("access"));
+  if (accessRow) accessRow[1] = payload.accessNotes;
+  else item.captured.push(["Site access requirements", payload.accessNotes]);
+}
+
 async function persistSettings() {
   const payload = {};
   app.querySelectorAll("[data-setting]").forEach((input) => {
@@ -701,6 +931,7 @@ function inquiryFromDetail(detail) {
   const row = detail.inquiry;
   const fields = detail.fields || [];
   const missing = detail.missing || [];
+  const actionableMissing = missing.filter((item) => ["open", "requested"].includes(item.status));
   const summary = detail.summaries?.[0]?.body;
   const captured = fields.map((field) => [field.label, field.value_text]).filter(([, value]) => value);
   return {
@@ -719,9 +950,16 @@ function inquiryFromDetail(detail) {
     workload: capitalize(row.workload),
     priority: capitalize(row.priority === "urgent" ? "High" : row.priority),
     confidence: row.confidence_score || 0,
-    missingCount: missing.filter((item) => ["open", "requested"].includes(item.status)).length,
-    missing: missing.map((item) => item.label).slice(0, 3),
-    missingFull: missing.map((item) => item.label),
+    missingCount: actionableMissing.length,
+    missing: actionableMissing.map((item) => item.label).slice(0, 3),
+    missingFull: actionableMissing.map((item) => item.label),
+    missingItems: missing.map((item) => ({
+      id: item.id,
+      label: item.label,
+      status: item.status,
+      severity: item.severity,
+      category: item.category
+    })),
     captured,
     summary: summary || "No AI summary has been generated yet.",
     next: missing.length ? "Send follow-up" : "Start estimate",
@@ -750,6 +988,32 @@ function publicCommunicationFromApi(communication) {
     status: communication.status,
     occurredAt: communication.occurred_at || communication.occurredAt || ""
   };
+}
+
+function publicSiteVisitFromApi(visit) {
+  return {
+    id: visit.id,
+    status: visit.status,
+    scheduledStart: visit.scheduled_start || visit.scheduledStart || "",
+    scheduledEnd: visit.scheduled_end || visit.scheduledEnd || "",
+    notes: visit.notes || "",
+    checklistItems: (visit.checklistItems || []).map((item) => ({
+      id: item.id,
+      label: item.label,
+      status: item.status,
+      notes: item.notes || ""
+    }))
+  };
+}
+
+function defaultLocalChecklist() {
+  return [
+    "Confirm site access window",
+    "Capture room and equipment photos",
+    "Validate rack and equipment inventory",
+    "Confirm electrical disconnect and utility shutoff",
+    "Document escort and loading dock requirements"
+  ].map((label, index) => ({ id: `local_check_${index}`, label, status: "open" }));
 }
 
 function deliveryNotice(result) {
@@ -797,6 +1061,40 @@ function productFromSavedDocument(document) {
     missingRiskNotes: metadata.missingRiskNotes || [],
     nextActions: metadata.nextActions || [],
     currentVersion: document.currentVersion
+  };
+}
+
+function estimatePayloadFor(item) {
+  const generated = state.generatedProducts[item.id]?.estimate || state.generatedProducts[item.id]?.proposal;
+  const generatedEstimate = generated?.estimate || {};
+  const fallback = estimateFor(item);
+  const lowCents = Number(generatedEstimate.lowCents || fallback.low * 100);
+  const highCents = Number(generatedEstimate.highCents || fallback.high * 100);
+  const lineItems = Array.isArray(generatedEstimate.lineItems) && generatedEstimate.lineItems.length
+    ? generatedEstimate.lineItems
+    : [
+      ["labor", "Labor", fallback.labor],
+      ["logistics", "Logistics", fallback.logistics],
+      ["recycling", "Recycling", fallback.recycling],
+      ["contingency", "Contingency", fallback.contingency]
+    ].map(([lineType, description, dollars]) => ({
+      lineType,
+      description,
+      quantity: 1,
+      unit: "each",
+      unitCostCents: dollars * 100
+    }));
+  return {
+    lowCents,
+    highCents,
+    assumptions: generatedEstimate.assumptions || `Target margin ${fallback.margin}. Final range subject to site verification.`,
+    lineItems: lineItems.map((line) => ({
+      lineType: line.lineType || "other",
+      description: line.description || "Estimate line item",
+      quantity: Number(line.quantity || 1),
+      unit: line.unit || "each",
+      unitCostCents: Math.round(Number(line.unitCostCents || 0))
+    }))
   };
 }
 
@@ -878,7 +1176,7 @@ function formatRange(low, high) {
 
 function formatShortRange(low, high) {
   if (low == null || high == null) return "TBD";
-  return `$${Math.round(low / 1000)}k-$${Math.round(high / 1000)}k`;
+  return `$${Math.round(low / 100000)}k-$${Math.round(high / 100000)}k`;
 }
 
 function capitalize(value) {

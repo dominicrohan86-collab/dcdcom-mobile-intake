@@ -2,7 +2,7 @@ import { ensureDatabase, json, readUser, run } from "./db.js";
 import { analyzeIntake, extractionToPreview, generateWorkProduct } from "./ai.js";
 import { requireAdminAccess, requireWriteAccess } from "./auth.js";
 import { readJson, optionalEnum, requiredString, ValidationError } from "./validation.js";
-import { createActivity, createFileRecord, createGeneratedWorkProduct, createInquiry, createInquiryFromExtraction, getFileForDownload, getInquiryDetail, getUserPreferences, listCommunications, listFilesForInquiry, listInquiries, listIntegrations, logCommunication, recordAiRun, saveDocumentDraft, sendOutboundCommunication, syncInquiry, updateInquiryStatus, updateMissingRequirement, updateUserPreferences, upsertIntegration } from "./repository.js";
+import { createActivity, createFileRecord, createGeneratedWorkProduct, createInquiry, createInquiryFromExtraction, getFileForDownload, getInquiryDetail, getUserPreferences, listCommunications, listFilesForInquiry, listInquiries, listIntegrations, listSiteVisits, logCommunication, recordAiRun, saveDocumentDraft, saveEstimateForInquiry, scheduleSiteVisit, sendOutboundCommunication, submitProposalForReview, syncInquiry, updateChecklistItem, updateInquiryDetails, updateInquiryStatus, updateMissingRequirement, updateUserPreferences, updateUserProfile, upsertIntegration } from "./repository.js";
 
 const ACCOUNT_ID = "acct_dcdcom";
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -50,6 +50,17 @@ export async function handleApi(request, env) {
     if (guard) return guard;
     const payload = await readJson(request);
     return json({ preferences: await updateUserPreferences(env, ACCOUNT_ID, user.id, payload) });
+  }
+
+  if (url.pathname === "/api/profile" && request.method === "PATCH") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request);
+    const profile = await updateUserProfile(env, ACCOUNT_ID, user.id, {
+      fullName: requiredString(payload, "fullName", { maxLength: 120 }),
+      avatarUrl: payload.avatarUrl || null
+    });
+    return profile ? json({ user: publicUser(profile) }) : json({ error: "User not found" }, 404);
   }
 
   if (url.pathname === "/api/integrations" && request.method === "GET") {
@@ -162,6 +173,20 @@ export async function handleApi(request, env) {
     return json(await createActivity(env, ACCOUNT_ID, activityMatch[1], user.id, payload.eventType || "note", payload.summary, payload.metadata || {}), 201);
   }
 
+  const detailsMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/details$/);
+  if (detailsMatch && request.method === "PATCH") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request);
+    const details = await updateInquiryDetails(env, ACCOUNT_ID, detailsMatch[1], user.id, {
+      contact: requiredString(payload, "contact", { maxLength: 160 }),
+      email: payload.email ? requiredString(payload, "email", { maxLength: 180 }) : "",
+      phone: payload.phone ? requiredString(payload, "phone", { maxLength: 40 }) : "",
+      accessNotes: payload.accessNotes ? requiredString(payload, "accessNotes", { maxLength: 600 }) : ""
+    });
+    return details ? json({ details }) : json({ error: "Inquiry not found" }, 404);
+  }
+
   const generateMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/generate$/);
   if (generateMatch && request.method === "POST") {
     const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
@@ -259,6 +284,36 @@ export async function handleApi(request, env) {
     return json({ ...result, document }, result?.communication?.status === "sent" ? 200 : 202);
   }
 
+  const proposalReviewMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/proposal-review$/);
+  if (proposalReviewMatch && request.method === "POST") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request);
+    const result = await submitProposalForReview(env, ACCOUNT_ID, proposalReviewMatch[1], user.id, {
+      documentId: payload.documentId || null
+    });
+    return result ? json(result, 200) : json({ error: "Proposal draft not found" }, 404);
+  }
+
+  const estimateMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/estimate$/);
+  if (estimateMatch && request.method === "POST") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request, { maxBytes: 64 * 1024 });
+    const lowCents = Number(payload.lowCents);
+    const highCents = Number(payload.highCents);
+    if (!Number.isFinite(lowCents) || !Number.isFinite(highCents) || lowCents <= 0 || highCents <= 0 || highCents < lowCents) {
+      throw new ValidationError("A valid estimate range is required.", 400);
+    }
+    const result = await saveEstimateForInquiry(env, ACCOUNT_ID, estimateMatch[1], user.id, {
+      lowCents,
+      highCents,
+      assumptions: payload.assumptions || null,
+      lineItems: Array.isArray(payload.lineItems) ? payload.lineItems : []
+    });
+    return result ? json(result, 201) : json({ error: "Inquiry not found" }, 404);
+  }
+
   const filesMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/files$/);
   if (filesMatch && request.method === "GET") {
     return json({ files: await listFilesForInquiry(env, ACCOUNT_ID, filesMatch[1]) });
@@ -295,6 +350,23 @@ export async function handleApi(request, env) {
       category
     });
     return json({ file: publicFile(record) }, 201);
+  }
+
+  const siteVisitsMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/site-visits$/);
+  if (siteVisitsMatch && request.method === "GET") {
+    return json({ siteVisits: await listSiteVisits(env, ACCOUNT_ID, siteVisitsMatch[1]) });
+  }
+  if (siteVisitsMatch && request.method === "POST") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request, { maxBytes: 64 * 1024 });
+    const result = await scheduleSiteVisit(env, ACCOUNT_ID, siteVisitsMatch[1], user.id, {
+      scheduledStart: payload.scheduledStart || null,
+      scheduledEnd: payload.scheduledEnd || null,
+      notes: payload.notes || null,
+      checklist: Array.isArray(payload.checklist) ? payload.checklist.map(String).slice(0, 20) : undefined
+    });
+    return result ? json(result, 201) : json({ error: "Inquiry not found" }, 404);
   }
 
   const downloadMatch = url.pathname.match(/^\/api\/files\/([^/]+)$/);
@@ -334,6 +406,16 @@ export async function handleApi(request, env) {
     const status = optionalEnum(payload.status, ["open", "requested", "received", "waived"], "open");
     const updated = await updateMissingRequirement(env, ACCOUNT_ID, missingMatch[1], user.id, status);
     return updated ? json({ requirement: updated }) : json({ error: "Requirement not found" }, 404);
+  }
+
+  const checklistMatch = url.pathname.match(/^\/api\/checklist-items\/([^/]+)$/);
+  if (checklistMatch && request.method === "PATCH") {
+    const guard = await requireWriteAccess(env, ACCOUNT_ID, user);
+    if (guard) return guard;
+    const payload = await readJson(request);
+    const status = optionalEnum(payload.status, ["open", "done", "not_applicable"], "open");
+    const updated = await updateChecklistItem(env, ACCOUNT_ID, checklistMatch[1], user.id, status, payload.notes || null);
+    return updated ? json({ checklistItem: updated }) : json({ error: "Checklist item not found" }, 404);
   }
 
   const syncMatch = url.pathname.match(/^\/api\/inquiries\/([^/]+)\/sync$/);
@@ -390,6 +472,16 @@ function publicFile(file) {
     sizeBytes: file.sizeBytes,
     category: file.category,
     url: `/api/files/${encodeURIComponent(file.id)}`
+  };
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.full_name || user.fullName,
+    role: user.role,
+    avatarUrl: user.avatar_url || null
   };
 }
 

@@ -31,7 +31,7 @@ const panels = {
       ["Logistics", estimate.logistics],
       ["Recycling", estimate.recycling],
       ["Contingency", estimate.contingency]
-    ].map(([description, value]) => ({ description, unitCostCents: value }));
+    ].map(([description, value]) => ({ description, unitCostCents: value * 100 }));
     const low = generated?.estimate?.lowCents ? Math.round(generated.estimate.lowCents / 100) : estimate.low;
     const high = generated?.estimate?.highCents ? Math.round(generated.estimate.highCents / 100) : estimate.high;
     return {
@@ -47,7 +47,10 @@ const panels = {
   },
   "site-check"(item, state) {
     const generated = state.generatedProducts[item.id]?.site_checklist;
-    const checks = generated?.body
+    const visit = state.siteVisits[item.id]?.[0];
+    const checks = visit?.checklistItems?.length
+      ? visit.checklistItems.map((check) => [check.id, check.label, check.status])
+      : generated?.body
       ? generated.body.split("\n").map((line, index) => [`ai-${index}`, line.replace(/^[-*\d.\s]+/, "").trim()]).filter(([, label]) => label)
       : [
       ["access", "Confirm site access window"],
@@ -59,9 +62,14 @@ const panels = {
     return {
       title: "Site Visit Checklist",
       body: `
-        <div class="check-panel">
-          ${checks.map(([key, label]) => `<label><input type="checkbox" data-checklist="${key}" ${state.checklist[key] ? "checked" : ""}/> <span>${label}</span></label>`).join("")}
+        <div class="visit-summary">
+          <b>${visit ? visitStatusLabel(visit) : "No scheduled visit"}</b>
+          <span>${visit?.scheduledStart ? formatDateTime(visit.scheduledStart) : "Create a calendar-ready site visit hold for field verification."}</span>
         </div>
+        <div class="check-panel">
+          ${checks.map(([key, label, status]) => `<label><input type="checkbox" data-checklist="${key}" ${status === "done" || state.checklist[key] ? "checked" : ""}/> <span>${escapeHtml(label)}</span></label>`).join("")}
+        </div>
+        <button class="secondary full" data-action="schedule-site-visit">${icon("calendar")} ${visit ? "Reschedule Site Visit" : "Schedule Site Visit"}</button>
         <button class="primary full" data-action="complete-checklist">${icon("check")} Save Checklist</button>
       `
     };
@@ -85,12 +93,26 @@ const panels = {
       title: "Edit Extracted Details",
       body: `
         <div class="edit-form">
-          <label>Contact<input id="editContact" value="${item.contact}"/></label>
-          <label>Email<input id="editEmail" value="${item.email}"/></label>
-          <label>Phone<input id="editPhone" value="${item.phone}"/></label>
-          <label>Access Notes<input id="editAccess" value="${item.captured.find(([k]) => k.includes("access"))?.[1] || "After hours"}"/></label>
+          <label>Contact<input id="editContact" value="${escapeHtml(item.contact)}"/></label>
+          <label>Email<input id="editEmail" value="${escapeHtml(item.email)}"/></label>
+          <label>Phone<input id="editPhone" value="${escapeHtml(item.phone)}"/></label>
+          <label>Access Notes<input id="editAccess" value="${escapeHtml(item.captured.find(([k]) => k.toLowerCase().includes("access"))?.[1] || "After hours")}"/></label>
         </div>
         <button class="primary full" data-action="save-details">${icon("check")} Save Details</button>
+      `
+    };
+  },
+  "proposal-edit"(item, state) {
+    const generated = state.generatedProducts[item.id]?.proposal;
+    const fallback = `Scope\nProvide turnkey decommissioning of ${item.title} including equipment removal, cable management, asset recovery, and site cleanup.\n\nAssumptions\nEstimate assumes customer-provided access, inventory validation, normal loading conditions, and no unknown hazardous materials.\n\nDeliverables\nCloseout report, site photos, recycling documentation, asset recovery list, and completion certification.\n\nTerms\nPricing is valid for 30 days and work begins after written approval and site walk confirmation.`;
+    return {
+      title: "Edit Proposal Draft",
+      body: `
+        <div class="edit-form">
+          <label>Title<input id="proposalTitle" value="${escapeHtml(generated?.title || `${item.title} Proposal`)}"/></label>
+          <label>Proposal Body<textarea id="proposalBody">${escapeHtml(generated?.body || fallback)}</textarea></label>
+        </div>
+        <button class="primary full" data-action="save-proposal-edits">${icon("check")} Save Proposal Version</button>
       `
     };
   },
@@ -146,12 +168,17 @@ const panels = {
       `
     };
   },
-  account() {
+  account(item, state) {
+    const user = state.user || { fullName: "Alex Morgan", email: "alex@dcdcom.com", role: "project_manager" };
     return {
       title: "Account",
       body: `
-        <div class="contact-card"><b>Alex Morgan</b><span>DCDcom operations lead</span><span>alex@dcdcom.com</span></div>
-        <button class="primary full" data-action="save-settings">${icon("check")} Save Profile</button>
+        <div class="edit-form">
+          <label>Name<input id="profileName" value="${escapeHtml(user.fullName || user.full_name || "Alex Morgan")}"/></label>
+          <label>Email<input id="profileEmail" value="${escapeHtml(user.email || "alex@dcdcom.com")}" readonly/></label>
+          <label>Role<input id="profileRole" value="${escapeHtml(roleLabel(user.role || "project_manager"))}" readonly/></label>
+        </div>
+        <button class="primary full" data-action="save-profile">${icon("check")} Save Profile</button>
       `
     };
   },
@@ -195,5 +222,26 @@ function parseSettings(value) {
     return typeof value === "string" ? JSON.parse(value) : value;
   } catch {
     return {};
+  }
+}
+
+function roleLabel(role) {
+  return String(role || "project_manager").replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function visitStatusLabel(visit) {
+  return `${String(visit.status || "needed").replace("_", " ")} site visit`;
+}
+
+function formatDateTime(value) {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    }).format(new Date(value));
+  } catch {
+    return value;
   }
 }

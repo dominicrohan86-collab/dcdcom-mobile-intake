@@ -59,6 +59,14 @@ export function getInquiryDetail(inquiryId) {
   return getJson(`/api/inquiries/${encodeURIComponent(inquiryId)}`);
 }
 
+export function saveProfile(payload) {
+  return patchJson("/api/profile", payload);
+}
+
+export function updateInquiryDetails(inquiryId, payload) {
+  return patchJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/details`, payload);
+}
+
 export function analyzeIntakePreview(payload) {
   return postJson("/api/ai/intake-preview", payload);
 }
@@ -75,8 +83,16 @@ export function saveInquiryDocument(inquiryId, payload) {
   return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/documents`, payload);
 }
 
+export function saveInquiryEstimate(inquiryId, payload) {
+  return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/estimate`, payload);
+}
+
 export function sendFollowUpEmail(inquiryId, payload) {
   return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/send-follow-up`, payload);
+}
+
+export function submitProposalReview(inquiryId, payload = {}) {
+  return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/proposal-review`, payload);
 }
 
 export function listInquiryCommunications(inquiryId) {
@@ -101,6 +117,18 @@ export function syncInquiry(inquiryId, provider = "crm") {
 
 export function updateInquiryStatus(inquiryId, status) {
   return patchJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/status`, { status });
+}
+
+export function updateMissingRequirement(requirementId, status) {
+  return patchJson(`/api/missing-requirements/${encodeURIComponent(requirementId)}`, { status });
+}
+
+export function scheduleInquirySiteVisit(inquiryId, payload = {}) {
+  return postJson(`/api/inquiries/${encodeURIComponent(inquiryId)}/site-visits`, payload);
+}
+
+export function updateSiteChecklistItem(itemId, payload) {
+  return patchJson(`/api/checklist-items/${encodeURIComponent(itemId)}`, payload);
 }
 
 export async function uploadInquiryFile(inquiryId, { file, category = "other" }) {

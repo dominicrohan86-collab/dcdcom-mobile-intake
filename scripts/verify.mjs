@@ -77,13 +77,18 @@ for (const token of ["requireWriteAccess", "/api/integrations", "/api/settings",
 for (const token of ["/api/readiness", "readinessReport", "OPENAI_API_KEY"]) {
   assert(api.includes(token), `api should include ${token}`);
 }
-for (const token of ["/api/intake/inbound", "/communications", "/send-follow-up"]) {
+for (const token of ["/api/intake/inbound", "/communications", "/send-follow-up", "/site-visits", "checklist-items", "/api/profile", "/details", "/proposal-review", "/estimate"]) {
   assert(api.includes(token), `api should include ${token}`);
 }
 
 const repository = await readFile("src/server/repository.js", "utf8");
-for (const token of ["INSERT INTO audit_log", "INSERT INTO sync_events", "UPDATE user_preferences", "integration_connections", "sendOutboundCommunication", "communication_delivery_attempts"]) {
+for (const token of ["INSERT INTO audit_log", "INSERT INTO sync_events", "UPDATE user_preferences", "integration_connections", "sendOutboundCommunication", "communication_delivery_attempts", "scheduleSiteVisit", "updateChecklistItem", "updateInquiryDetails", "updateUserProfile", "submitProposalForReview", "saveEstimateForInquiry"]) {
   assert(repository.includes(token), `repository should include ${token}`);
+}
+
+const main = await readFile("src/main.js", "utf8");
+for (const token of ["save-profile", "save-proposal-edits", "persistInquiryDetails", "persistProposalEdits", "submitCurrentProposalForReview", "persistEstimate"]) {
+  assert(main.includes(token), `main should include ${token}`);
 }
 
 console.log("Verification passed.");
