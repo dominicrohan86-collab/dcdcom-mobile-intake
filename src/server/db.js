@@ -1,27 +1,16 @@
-import { schemaStatements } from "./schema.js";
+import { drizzle } from "drizzle-orm/d1";
+import * as schema from "../../db/drizzle-schema.js";
 
-const initializedBindings = new WeakSet();
+const clients = new WeakMap();
 
 export async function ensureDatabase(env) {
-  if (!env?.DB || initializedBindings.has(env.DB)) return Boolean(env?.DB);
-  await env.DB.batch(schemaStatements.map((statement) => env.DB.prepare(statement)));
-  initializedBindings.add(env.DB);
-  return true;
+  return Boolean(env?.DB);
 }
 
-export async function all(env, sql, bindings = []) {
-  await ensureDatabase(env);
-  return env.DB.prepare(sql).bind(...bindings).all();
-}
-
-export async function first(env, sql, bindings = []) {
-  await ensureDatabase(env);
-  return env.DB.prepare(sql).bind(...bindings).first();
-}
-
-export async function run(env, sql, bindings = []) {
-  await ensureDatabase(env);
-  return env.DB.prepare(sql).bind(...bindings).run();
+export function getDb(env) {
+  if (!env?.DB) throw new Error("D1 binding DB is not configured.");
+  if (!clients.has(env.DB)) clients.set(env.DB, drizzle(env.DB, { schema }));
+  return clients.get(env.DB);
 }
 
 export function json(data, init = 200) {

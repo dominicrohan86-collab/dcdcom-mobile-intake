@@ -1,15 +1,19 @@
 import { DatabaseSync } from "node:sqlite";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 export async function createLocalEnv(options = {}) {
   const root = resolve(options.root || ".");
   const envRoot = resolve(options.envRoot || root);
+  const migrationRoot = resolve(options.migrationRoot || process.cwd());
   const localRoot = resolve(root, ".local");
   const localEnv = await readLocalEnv(resolve(envRoot, ".env.local"));
   await mkdir(localRoot, { recursive: true });
+  const DB = new LocalD1(resolve(localRoot, "dcdcom.sqlite"));
+  const migration = await readFile(resolve(migrationRoot, "db", "migrations", "0000_initial.sql"), "utf8");
+  DB.migrate(migration);
   return {
-    DB: new LocalD1(resolve(localRoot, "dcdcom.sqlite")),
+    DB,
     FILES: new LocalR2(resolve(localRoot, "r2")),
     OPENAI_API_KEY: process.env.OPENAI_API_KEY || localEnv.OPENAI_API_KEY || "",
     OPENAI_MODEL: process.env.OPENAI_MODEL || localEnv.OPENAI_MODEL || "gpt-5.5",
@@ -46,6 +50,11 @@ class LocalD1 {
   constructor(path) {
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA foreign_keys = ON");
+  }
+
+  migrate(sql) {
+    const existing = this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'accounts'").get();
+    if (!existing) this.db.exec(sql.replaceAll("--> statement-breakpoint", ""));
   }
 
   prepare(sql) {
@@ -86,6 +95,14 @@ class LocalD1Statement {
 
   async first() {
     return this.db.prepare(this.sql).get(...this.bindings) || null;
+  }
+
+  async raw(options = {}) {
+    const statement = this.db.prepare(this.sql);
+    statement.setReturnArrays(true);
+    const columns = statement.columns().map((column) => column.name);
+    const rows = statement.all(...this.bindings);
+    return options.columnNames ? [columns, ...rows] : rows;
   }
 
   async run() {
@@ -136,6 +153,11 @@ class LocalR2 {
     } catch {
       return null;
     }
+  }
+
+  async delete(key) {
+    const path = this.pathFor(key);
+    await Promise.all([rm(path, { force: true }), rm(`${path}.meta.json`, { force: true })]);
   }
 
   pathFor(key) {

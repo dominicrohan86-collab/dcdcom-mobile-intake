@@ -8,11 +8,10 @@ This app is designed around a Cloudflare D1 database using SQLite-compatible SQL
 - File/object binding: `FILES`
 - Configured in `.openai/hosting.json` as `"d1": "DB"`
 - Configured in `.openai/hosting.json` as `"r2": "FILES"`
-- Canonical schema source: `db/schema.ts`
-- Typed model catalog: `db/models.ts`
-- Materialized SQL: `db/schema.sql`
-- Initial migration: `db/migrations/0001_initial.sql`
-- Seed data: `db/seed.sql`
+- Canonical schema source: `db/drizzle-schema.js`
+- ORM: Drizzle ORM with the D1 adapter
+- Migration generator: Drizzle Kit
+- Initial migration: `db/migrations/0000_initial.sql`
 
 ## Core Model Groups
 
@@ -69,7 +68,7 @@ The Worker now routes `/api/*` before static assets:
 - `GET /api/inquiries/:id` returns one inquiry with extracted fields, missing requirements, AI summaries, activity, and documents.
 - `POST /api/inquiries/:id/activity` appends an activity event.
 
-The mobile UI hydrates queue/detail data from the Worker when the local or hosted API is available, then falls back to local mock data when the Worker is unavailable.
+The React UI hydrates queue/detail data through TanStack Query and the Hono Worker API.
 
 ## Table Catalog
 
@@ -136,10 +135,10 @@ The migration includes indexes for:
 
 ## Deployment Notes
 
-1. Run `npm run db:materialize` whenever `db/schema.ts` changes.
-2. Run `npm run build` to copy the server API, schema, migration files, and hosting metadata into `dist/`.
-3. Apply `db/migrations/0001_initial.sql` to the D1 database for first deployment.
-4. Apply `db/seed.sql` only for demo/dev data.
+1. Change `db/drizzle-schema.js`.
+2. Run `npm run db:generate` and review the generated migration.
+3. Apply the generated migration to D1 before deployment.
+4. Run `npm run verify` and deploy the contents of `dist/`.
 
 ## Local Worker Runtime
 

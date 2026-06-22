@@ -22,6 +22,15 @@ try {
   assert(boot.status === 200, "bootstrap should return 200");
   assert(boot.body.inquiries.length === 1, "bootstrap should seed one demo inquiry in fresh local env");
 
+  const todayDate = dateKey(new Date(), "America/New_York");
+  const today = await request(env, "GET", `/api/today?date=${todayDate}&timezone=America%2FNew_York`);
+  assert(today.status === 200, "today agenda should return 200");
+  assert(today.body.date === todayDate, "today agenda should preserve the selected date");
+  assert(today.body.actions.some((action) => action.type === "follow_up" && action.screen === "email"), "today agenda should expose a working follow-up action");
+  assert(today.body.events.some((event) => event.kind === "follow_up" && event.startMinutes === 540), "today agenda should schedule actionable workflow work");
+  const invalidToday = await request(env, "GET", "/api/today?date=not-a-date&timezone=America%2FNew_York");
+  assert(invalidToday.status === 400, "today agenda should reject invalid dates");
+
   const profile = await request(env, "PATCH", "/api/profile", { fullName: "Alex Production" });
   assert(profile.status === 200, "profile update should return 200");
   assert(profile.body.user.fullName === "Alex Production", "profile update should persist full name");
@@ -208,6 +217,11 @@ try {
   assert(siteVisits.status === 200, "site visits listing should return 200");
   assert(siteVisits.body.siteVisits.some((visit) => visit.checklistItems.some((item) => item.status === "done")), "site visits listing should expose updated checklist state");
 
+  const visitDate = dateKey(new Date(siteVisit.body.siteVisit.scheduled_start), "America/New_York");
+  const visitAgenda = await request(env, "GET", `/api/today?date=${visitDate}&timezone=America%2FNew_York`);
+  assert(visitAgenda.status === 200, "scheduled visit agenda should return 200");
+  assert(visitAgenda.body.events.some((event) => event.visitId === siteVisit.body.siteVisit.id && event.source === "calendar"), "today agenda should expose persisted site visits");
+
   const form = new FormData();
   form.append("category", "floor_plan");
   form.append("file", new File(["floor plan placeholder"], "floor-plan.txt", { type: "text/plain" }));
@@ -218,6 +232,15 @@ try {
   const files = await request(env, "GET", `/api/inquiries/${saved.body.id}/files`);
   assert(files.status === 200, "file listing should return 200");
   assert(files.body.files.length === 1, "file listing should include uploaded file");
+
+  const photoForm = new FormData();
+  photoForm.append("category", "photo");
+  photoForm.append("file", new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "site-photo.png", { type: "image/png" }));
+  const photoUpload = await request(env, "POST", `/api/inquiries/${saved.body.id}/files`, photoForm);
+  assert(photoUpload.status === 201, "photo upload should persist");
+  assert(photoUpload.body.file.category === "photo", "photo upload should preserve its category");
+  const filesAfterPhoto = await request(env, "GET", `/api/inquiries/${saved.body.id}/files`);
+  assert(filesAfterPhoto.body.files.some((file) => file.file_name === "site-photo.png" && file.content_type === "image/png"), "file listing should expose uploaded site photos");
 
   const download = await rawRequest(env, "GET", `/api/files/${upload.body.file.id}`);
   assert(download.status === 200, "file download should return 200");
@@ -243,6 +266,33 @@ try {
   assert(status.status === 200, "status update should return 200");
   assert(status.body.inquiry.status === "review", "status update should persist review");
 
+  const storedDocumentKey = files.body.files[0].storage_key;
+  const storedPhoto = filesAfterPhoto.body.files.find((file) => file.file_name === "site-photo.png");
+  const deletedInquiry = await request(env, "DELETE", `/api/inquiries/${saved.body.id}`);
+  assert(deletedInquiry.status === 200, "inquiry deletion should return 200");
+  assert(deletedInquiry.body.deleted === true, "inquiry deletion should confirm deletion");
+  assert(deletedInquiry.body.inquiry.deletedFiles === 2, "inquiry deletion should report removed stored files");
+  assert(await env.FILES.get(storedDocumentKey) === null, "inquiry deletion should remove document objects from storage");
+  assert(await env.FILES.get(storedPhoto.storage_key) === null, "inquiry deletion should remove photo objects from storage");
+  const deletedDetail = await request(env, "GET", `/api/inquiries/${saved.body.id}`);
+  assert(deletedDetail.status === 404, "deleted inquiry should no longer be readable");
+  const deletedFile = await rawRequest(env, "GET", `/api/files/${upload.body.file.id}`);
+  assert(deletedFile.status === 404, "deleted inquiry files should no longer be downloadable");
+  for (const table of ["inquiry_sources", "extracted_fields", "missing_requirements", "ai_summaries", "ai_runs", "estimates", "site_visits", "documents", "proposals", "communications", "files", "activity_events", "sync_events"]) {
+    assert(await countRows(env, table, "inquiry_id", saved.body.id) === 0, `${table} should not retain deleted inquiry records`);
+  }
+  assert(await countRows(env, "audit_log", "entity_id", saved.body.id) === 0, "audit log should not retain deleted inquiry entries");
+  const duplicateDelete = await request(env, "DELETE", `/api/inquiries/${saved.body.id}`);
+  assert(duplicateDelete.status === 404, "deleting a missing inquiry should return 404");
+
+  const remainingInquiries = await request(env, "GET", "/api/inquiries");
+  for (const inquiry of remainingInquiries.body.inquiries) {
+    const cleanup = await request(env, "DELETE", `/api/inquiries/${inquiry.id}`);
+    assert(cleanup.status === 200, "test workspace cleanup should delete each remaining inquiry");
+  }
+  const emptyWorkspace = await request(env, "GET", "/api/bootstrap");
+  assert(emptyWorkspace.body.inquiries.length === 0, "an intentionally emptied workspace should not reseed demo inquiries");
+
   console.log("API smoke tests passed.");
 } finally {
   await rm(root, { recursive: true, force: true });
@@ -267,4 +317,17 @@ async function rawRequest(env, method, path, payload) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function dateKey(value, timezone) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(value);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+async function countRows(env, table, column, value) {
+  const allowedTables = new Set(["inquiry_sources", "extracted_fields", "missing_requirements", "ai_summaries", "ai_runs", "estimates", "site_visits", "documents", "proposals", "communications", "files", "activity_events", "sync_events", "audit_log"]);
+  if (!allowedTables.has(table) || !["inquiry_id", "entity_id"].includes(column)) throw new Error("Unsupported deletion verification query");
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).bind(value).first();
+  return Number(row?.count || 0);
 }

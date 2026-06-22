@@ -1,108 +1,51 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { analyzeIntake, generateWorkProduct } from "../src/server/ai.js";
+import * as schema from "../db/drizzle-schema.js";
 
-const filesToCheck = [
-  "src/main.js",
-  "src/server/ai.js",
-  "src/server/api.js",
-  "src/server/auth.js",
-  "src/server/db.js",
-  "src/server/repository.js",
-  "src/server/validation.js",
-  "src/ui/action-panel.js",
-  "src/ui/screens/add-inquiry.js",
-  "src/ui/screens/email.js",
-  "src/ui/screens/proposal.js",
-  "scripts/build.mjs",
-  "scripts/dev-server.mjs",
-  "scripts/local-runtime.mjs",
-  "scripts/materialize-db.mjs",
-  "scripts/readiness.mjs",
-  "scripts/test-api.mjs"
+const serverFiles = [
+  "src/server/ai.js", "src/server/api.js", "src/server/app.js", "src/server/auth.js",
+  "src/server/bootstrap.js", "src/server/contracts.js", "src/server/db.js", "src/server/index.js",
+  "src/server/repository.js", "db/drizzle-schema.js", "scripts/build.mjs", "scripts/dev-server.mjs",
+  "scripts/local-runtime.mjs", "scripts/readiness.mjs", "scripts/test-api.mjs", "vite.config.js", "drizzle.config.js"
 ];
+for (const file of serverFiles) await run("node", ["--check", file]);
 
-for (const file of filesToCheck) {
-  await run("node", ["--check", file]);
+const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+for (const dependency of ["react", "@tanstack/react-query", "react-hook-form", "react-dropzone", "zod", "hono", "drizzle-orm", "@radix-ui/react-accordion", "@radix-ui/react-dialog", "@radix-ui/react-popover", "tailwindcss", "lucide-react", "ky"]) {
+  assert(packageJson.dependencies[dependency] || packageJson.devDependencies[dependency], `${dependency} should be installed`);
 }
 
-const intake = await analyzeIntake({}, {
-  sourceChannel: "phone",
-  rawText: "Spoke with Tom from NTT Data in Ashburn, VA. Need full data center decommissioning, cable, HVAC units, proposal, site visit, and roughly 40 racks by July 15."
-});
-
-assert(intake.mode === "fallback", "fallback intake mode should be used without OPENAI_API_KEY");
-assert(intake.extraction.company.name === "NTT Data", "fallback intake should detect NTT Data");
-assert(intake.extraction.service.type === "data_center_decommissioning", "fallback intake should detect service type");
-
-const product = await generateWorkProduct({}, {
-  type: "proposal",
-  tone: "Professional",
-  inquiry: {
-    id: "inq_test",
-    title: "NTT Data - Ashburn, VA",
-    company_name: "NTT Data",
-    contact_name: "Tom",
-    service_type: "data_center_decommissioning",
-    estimated_low_cents: 2500000,
-    estimated_high_cents: 4500000,
-    confidence_score: 78
-  },
-  fields: [],
-  missing: [{ label: "Floor plan" }, { label: "Access hours" }],
-  summaries: [{ body: "Customer needs a data center decommissioning proposal." }],
-  documents: []
-});
-
-assert(product.mode === "fallback", "fallback work-product mode should be used without OPENAI_API_KEY");
-assert(product.product.documentType === "proposal", "work product should preserve requested proposal type");
-assert(product.product.sections.length >= 3, "proposal should include sections");
-
-const schema = await readFile("db/schema.sql", "utf8");
-for (const token of ["CREATE TABLE IF NOT EXISTS ai_runs", "CREATE TABLE IF NOT EXISTS proposals", "CREATE TABLE IF NOT EXISTS estimate_lines", "CREATE TABLE IF NOT EXISTS communication_delivery_attempts"]) {
-  assert(schema.includes(token), `schema should include ${token}`);
-}
-
-const hosting = JSON.parse(await readFile(".openai/hosting.json", "utf8"));
-assert(hosting.d1 === "DB", "hosting should declare D1 binding DB");
-assert(hosting.r2 === "FILES", "hosting should declare R2 binding FILES");
-
-const api = await readFile("src/server/api.js", "utf8");
-for (const token of ["/api/files/", "env.FILES.put", "R2 binding FILES"]) {
-  assert(api.includes(token), `api should include ${token}`);
-}
-for (const token of ["requireWriteAccess", "/api/integrations", "/api/settings", "/sync", "/status"]) {
-  assert(api.includes(token), `api should include ${token}`);
-}
-for (const token of ["/api/readiness", "readinessReport", "OPENAI_API_KEY"]) {
-  assert(api.includes(token), `api should include ${token}`);
-}
-for (const token of ["/api/intake/inbound", "/communications", "/send-follow-up", "/site-visits", "checklist-items", "/api/profile", "/details", "/proposal-review", "/estimate"]) {
-  assert(api.includes(token), `api should include ${token}`);
-}
+const tableNames = Object.values(schema).filter((value) => value?.[Symbol.for("drizzle:IsDrizzleTable")]);
+assert(tableNames.length === 28, `Drizzle schema should define 28 tables, found ${tableNames.length}`);
 
 const repository = await readFile("src/server/repository.js", "utf8");
-for (const token of ["INSERT INTO audit_log", "INSERT INTO sync_events", "UPDATE user_preferences", "integration_connections", "sendOutboundCommunication", "communication_delivery_attempts", "scheduleSiteVisit", "updateChecklistItem", "updateInquiryDetails", "updateUserProfile", "submitProposalForReview", "saveEstimateForInquiry"]) {
-  assert(repository.includes(token), `repository should include ${token}`);
+assert(!/env\.DB|\.prepare\(|\bSELECT\s|\bINSERT\s+INTO\b|\bUPDATE\s+\w+\s+SET\b/i.test(repository), "repository should use Drizzle instead of raw D1/SQL");
+for (const token of ["getDb", "db.select", "db.insert", "db.update", "deleteInquiry", "env.FILES.delete", "sendOutboundCommunication", "scheduleSiteVisit", "submitProposalForReview"]) assert(repository.includes(token), `repository should include ${token}`);
+
+const app = await readFile("src/server/app.js", "utf8");
+for (const token of ["new Hono", "zValidator", "/api/today", "app.delete(\"/api/inquiries/:id\"", "/api/inquiries/:id/generate", "/api/inquiries/:id/send-follow-up", "/api/inquiries/:id/site-visits"]) assert(app.includes(token), `Hono app should include ${token}`);
+
+const client = await readFile("src/client/App.jsx", "utf8");
+for (const token of ["useQuery", "useMutation", "QueryClient", "InquiryDetailScreen", "ProposalScreen", "DocsScreen"]) assert(client.includes(token), `React client should include ${token}`);
+
+const inquiryDetail = await readFile("src/client/screens/InquiryDetail.jsx", "utf8");
+for (const token of ["useDropzone", "client.upload", "FileEvidence", "UploadFiles", "AccordionSection"]) assert(inquiryDetail.includes(token), `Inquiry detail should include ${token}`);
+
+for (const removed of ["src/main.js", "src/ui/components.js", "src/ui/screens/today.js", "src/state/app-state.js", "public/app.js", "public/styles.css", "src/server/validation.js", "db/schema.ts"]) {
+  let exists = true;
+  try { await access(removed); } catch { exists = false; }
+  assert(!exists, `${removed} should be removed after the stack migration`);
 }
 
-const main = await readFile("src/main.js", "utf8");
-for (const token of ["save-profile", "save-proposal-edits", "persistInquiryDetails", "persistProposalEdits", "submitCurrentProposalForReview", "persistEstimate"]) {
-  assert(main.includes(token), `main should include ${token}`);
-}
+const intake = await analyzeIntake({}, { sourceChannel: "phone", rawText: "Spoke with Tom from NTT Data in Ashburn, VA. Need full data center decommissioning, cable, HVAC units, proposal, site visit, and roughly 40 racks by July 15." });
+assert(intake.mode === "fallback", "fallback intake should work without an API key");
+assert(intake.extraction.company.name === "NTT Data", "fallback intake should detect company");
 
-console.log("Verification passed.");
+const product = await generateWorkProduct({}, { type: "proposal", tone: "Professional", inquiry: { id: "inq_test", title: "NTT Data - Ashburn, VA", company_name: "NTT Data", contact_name: "Tom", service_type: "data_center_decommissioning", estimated_low_cents: 2500000, estimated_high_cents: 4500000, confidence_score: 78 }, fields: [], missing: [{ label: "Floor plan" }], summaries: [{ body: "Customer needs a proposal." }], documents: [] });
+assert(product.product.documentType === "proposal" && product.product.sections.length >= 3, "proposal fallback should remain complete");
 
-function run(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: "inherit" });
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${command} ${args.join(" ")} exited with ${code}`));
-    });
-  });
-}
+console.log("Stack verification passed: React/Radix UI, Hono/Zod API, and Drizzle repository are active.");
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
+function run(command, args) { return new Promise((resolve, reject) => { const child = spawn(command, args, { stdio: "inherit" }); child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`${command} ${args.join(" ")} exited with ${code}`))); }); }
+function assert(condition, message) { if (!condition) throw new Error(message); }

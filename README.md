@@ -1,116 +1,61 @@
 # DCDcom Mobile Intake
 
-A mobile-first prototype for DCDcom.com that turns customer calls, emails, texts, or manual notes into a structured decommissioning opportunity.
+A mobile-first inquiry workflow for data-center decommissioning projects. Customer calls, emails, notes, and attachments become structured inquiries with missing-information tracking, estimates, site visits, versioned documents, proposals, communications, files, integrations, activity, and audit history.
 
-## What It Includes
+## Stack
 
-- Today and pipeline queues modeled after the supplied mobile references.
-- Add Inquiry flow with call note, email, manual, and photo/OCR input modes.
-- Mock AI extraction preview with confidence, captured fields, and missing information.
-- Review detail screen with AI summary, missing details, extracted contact data, and next actions.
-- Follow-up email generator with tone controls, include toggles, editable draft, regenerate, copy, and save behavior.
-- Proposal draft with tabs, approval state, confidence score, and review workflow.
-- A production-style Cloudflare D1 database layer with schema, typed models, seed data, migrations, and `/api/*` routes.
-- OpenAI-backed structured intake extraction with deterministic fallback when no API key is configured.
-- AI-generated follow-up emails, scopes of work, site visit checklists, estimates, and proposal drafts persisted as database records.
-- Generated and manually edited document bodies are versioned in D1, so drafts survive reloads and keep revision history.
-- Inbound call/email/text intake and outbound follow-up delivery records stored in a customer communication timeline.
-- Durable missing-info resolution and site visit checklist workflows with activity/audit history.
-- Correctly mapped edit workflows: profile edits update the user record, extracted-detail edits update contact/site records, and proposal edits save proposal document versions.
-- R2-backed uploads for photos, floor plans, equipment lists, and customer attachments, with D1 metadata.
-- Workspace-authenticated, role-aware write APIs with audit logging for workflow, settings, and integration changes.
+The application uses package-backed layers throughout:
 
-## Project Structure
+- **UI:** React 19, Vite, Tailwind CSS 4, Radix UI primitives, Lucide icons, TanStack Query, React Hook Form, Zod, Ky, CVA, `clsx`, and `tailwind-merge`.
+- **API:** Hono with `@hono/zod-validator`, shared Zod contracts, secure-header middleware, and Cloudflare Worker-compatible request handling.
+- **Database:** Drizzle ORM and Drizzle Kit over Cloudflare D1/SQLite, with a 28-table schema and generated SQL migrations.
+- **Files:** Cloudflare R2 in production and a filesystem-backed R2 adapter locally.
+- **Build:** Vite for the client and esbuild for the bundled Worker.
 
-- `public/` contains the static HTML entry, stylesheet, and tiny browser bootstrap.
-- `src/state/` contains app state and mock DCDcom opportunity data.
-- `src/lib/` contains reusable extraction, draft, and icon utilities.
-- `src/ui/components.js` contains shared UI primitives.
-- `src/ui/screens/` contains one module per mobile screen.
-- `src/server/` contains the Sites worker API, database bootstrap, and repository functions.
-- `src/server/ai.js` contains the OpenAI Responses API integration and fallback extractor.
-- `src/server/auth.js` and `src/server/validation.js` contain server-side authorization and request validation helpers.
-- `db/` contains the canonical database schema, typed models, materialized SQL, seed data, and migrations.
-- `docs/database-spec.md` contains the database architecture and deployment notes.
-- `scripts/` contains the local development server and Sites-compatible build script.
+The retired vanilla DOM renderer, string-template components, global event binder, manual URL router, custom JSON validation helpers, hand-authored SQL repository, and schema materializer have been removed.
 
 ## Commands
 
 ```bash
-npm run dev
-npm run db:materialize
-npm run test:api
-npm run readiness
-npm run build
-npm run verify
+npm run dev          # Vite UI and local Worker API at http://127.0.0.1:4173
+npm run db:generate  # Generate a migration after changing db/drizzle-schema.js
+npm run db:check     # Validate Drizzle migrations
+npm run test:api     # End-to-end API workflow tests
+npm run readiness    # D1, R2, identity, account, and AI readiness
+npm run build        # Production client and Worker bundles
+npm run verify       # Architecture, API, readiness, and production build gates
 ```
 
-`npm run dev` serves the mobile app and routes `/api/*` through the same Worker handler used in production. For local development it creates a SQLite-backed D1 emulator and filesystem-backed R2 emulator under `.local/`, so intake, AI fallback generation, uploads, settings, integrations, and sync flows can be exercised without provisioning cloud resources first.
+## Project Structure
 
-## Database Layer
+- `src/client/` contains the React application, Radix-backed primitives, screens, query client, and Ky API client.
+- `src/server/app.js` declares the Hono routes and Zod validators.
+- `src/server/repository.js` implements all persistence with Drizzle query builders.
+- `db/drizzle-schema.js` is the canonical database schema.
+- `db/migrations/` contains Drizzle Kit migration SQL and metadata.
+- `scripts/local-runtime.mjs` provides local D1 and R2-compatible bindings.
+- `scripts/test-api.mjs` exercises the complete inquiry lifecycle through Hono.
+- `docs/stack.md` records package choices and the migration boundary.
 
-The app is configured for a Cloudflare D1 binding named `DB` and an R2 binding named `FILES` in `.openai/hosting.json`. The source of truth is `db/schema.ts`; `npm run db:materialize` generates `db/schema.sql`, `db/migrations/0001_initial.sql`, and `src/server/schema.js`.
+## Local Runtime
 
-The initial database covers accounts, users, companies, contacts, sites, inquiries, raw intake sources, AI runs, AI extracted fields, missing requirements, summaries, estimates, site visits, checklists, documents, proposals, communications, communication delivery attempts, files, integrations, notifications, activity events, and audit logs.
+`npm run dev` starts a Vite middleware server and routes `/api/*` through the same Hono app used by the production Worker. Local D1 data is stored in `.local/dcdcom.sqlite`; local R2 objects are stored under `.local/r2/`. A fresh local database applies `db/migrations/0000_initial.sql` automatically.
 
-## AI Configuration
-
-Set these runtime environment variables for live AI extraction:
+Configure optional live services in `.env.local`:
 
 ```bash
-OPENAI_API_KEY=your_api_key
+OPENAI_API_KEY=your_key
 OPENAI_MODEL=gpt-5.5
-EMAIL_PROVIDER_WEBHOOK=https://your-email-service.example/send
-SMS_PROVIDER_WEBHOOK=https://your-sms-service.example/send
+EMAIL_PROVIDER_WEBHOOK=https://your-provider.example/send
+SMS_PROVIDER_WEBHOOK=https://your-provider.example/send
 ```
 
-When `OPENAI_API_KEY` is missing, the app still works with a deterministic fallback extractor and records the fallback in `ai_runs`.
+Without an OpenAI key, deterministic extraction and work-product generation remain available. Without communication provider webhooks, outbound messages are safely queued and logged instead of being reported as sent.
 
-When email/SMS provider webhooks are missing, outbound follow-ups are queued and logged instead of being falsely marked as sent. Connect `EMAIL_PROVIDER_WEBHOOK`, `SMS_PROVIDER_WEBHOOK`, or `COMMUNICATION_PROVIDER_WEBHOOK` to a provider adapter such as Postmark, SendGrid, Twilio, or a company middleware service.
+## Deployment
 
-AI/API endpoints:
+The Worker expects D1 as `DB`, R2 as `FILES`, and static assets as `ASSETS`. Apply Drizzle migrations to D1 before deployment. `npm run build` writes the Vite client to `dist/client`, a bundled Worker to `dist/server/index.js`, and hosting/database metadata under `dist/.openai`.
 
-- `POST /api/ai/intake-preview` analyzes pasted customer communication and returns structured preview rows.
-- `POST /api/intake/inbound` accepts external email/SMS/call intake, runs extraction, and creates a database-backed opportunity.
-- `POST /api/inquiries/from-source` analyzes the raw source, persists normalized records to D1, and returns the saved inquiry id.
-- `POST /api/inquiries/:id/generate` generates and persists downstream work products such as follow-up emails, proposals, scopes, estimates, and site checklists.
-- `POST /api/inquiries/:id/documents` saves edited drafts as durable document versions.
-- `POST /api/inquiries/:id/estimate` saves an approved estimate version, line items, assumptions, and the current opportunity range.
-- `PATCH /api/profile` saves the authenticated user's profile.
-- `PATCH /api/inquiries/:id/details` persists edited extracted contact and site access details.
-- `POST /api/inquiries/:id/proposal-review` submits the current proposal document version for internal review.
-- `GET /api/inquiries/:id/communications` returns the customer communication timeline.
-- `POST /api/inquiries/:id/communications` logs an inbound or outbound customer communication.
-- `POST /api/inquiries/:id/send-follow-up` saves the follow-up email version and queues/sends provider delivery.
-- `PATCH /api/missing-requirements/:id` tracks requested, received, and waived missing-info items.
-- `GET/POST /api/inquiries/:id/site-visits` lists or schedules a field verification visit with checklist items.
-- `PATCH /api/checklist-items/:id` persists site visit checklist completion.
-- `GET /api/inquiries/:id/files` lists linked photos, plans, equipment lists, and attachments.
-- `POST /api/inquiries/:id/files` stores bytes in R2 and metadata in D1.
-- `GET /api/files/:id` returns an authorized file download.
-- `PUT /api/settings` saves notification preferences.
-- `POST /api/integrations` connects CRM/email/calendar/storage integration placeholders.
-- `POST /api/inquiries/:id/sync` writes a durable sync event and activity timeline entry.
-- `PATCH /api/inquiries/:id/status` updates workflow status with audit history.
-- `GET /api/readiness` checks D1/R2 bindings, schema, account bootstrap, user identity, and OpenAI configuration.
+## Verification Coverage
 
-The build output is written to `dist/` with `dist/server/index.js`, `dist/client/**`, and `dist/.openai/hosting.json` for Sites hosting.
-
-## Local Verification
-
-`npm run test:api` runs an end-to-end smoke test against the local Worker environment. It verifies bootstrap, profile updates, AI intake fallback, inbound intake webhooks, inquiry creation, extracted-detail edits, proposal generation/editing/review submission/readback, edited document versioning, queued follow-up delivery, communication timeline readback, missing-info status changes, site visit scheduling, checklist completion, file upload/download, settings, integration connection, CRM sync, and workflow status updates.
-
-`npm run readiness` prints a readiness report using the local Worker environment. Missing `OPENAI_API_KEY` is treated as a warning because fallback AI remains available locally; production should configure it before customer use.
-
-## Production Readiness
-
-Before a customer deployment, verify:
-
-- `.openai/hosting.json` has `d1: "DB"` and `r2: "FILES"`.
-- D1 has `db/migrations/0001_initial.sql` applied.
-- R2 storage is provisioned for the `FILES` binding.
-- `OPENAI_API_KEY` and `OPENAI_MODEL` are configured in the hosted runtime.
-- `npm run verify` and `npm run build` pass.
-- `/api/readiness` returns no blocking failures in the deployed environment.
-
-API JSON responses include security headers, no-store caching, and request IDs. File downloads are account/inquiry authorized and served with conservative content headers.
+The API test covers health/readiness, bootstrap, profile and settings updates, live/fallback intake extraction, external inbound intake, inquiry creation, generated and edited proposal versions, proposal review submission, estimates and line items, follow-up delivery queueing, communication history, missing requirements, site visits, checklist completion, file upload/download, integrations, CRM sync, and workflow status changes.
