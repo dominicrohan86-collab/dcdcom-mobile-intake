@@ -10,7 +10,7 @@ const requirementOptions = [["open", "Open"], ["requested", "Requested"], ["rece
 const fileCategoryOptions = [["other", "General document"], ["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
 const primaryDetailFieldKeys = new Set(["company_name", "contact_name", "contact_email", "contact_phone"]);
 
-export function InquiryDetailScreen({ detail, navigate, notice, setNotice, onDeleted }) {
+export function InquiryDetailScreen({ detail, navigate, openDocument: openSavedDocument, notice, setNotice, onDeleted }) {
   const queryClient = useQueryClient();
   const item = adaptInquiry(detail.inquiry);
   const [dialog, setDialog] = React.useState(null);
@@ -42,9 +42,7 @@ export function InquiryDetailScreen({ detail, navigate, notice, setNotice, onDel
   const deleteMutation = useMutation({ mutationFn: () => client.deleteInquiry(item.id), onSuccess: () => onDeleted(item.id, item.title) });
 
   function openDocument(document) {
-    if (document.document_type === "proposal") navigate("proposal");
-    else if (document.document_type === "follow_up_email") navigate("email");
-    else { setToolResult(document); setDialog("document"); }
+    openSavedDocument?.(document.id);
   }
 
   const pageError = toolMutation.error || requirementMutation.error || uploadMutation.error || detailsMutation.error || visitMutation.error || deleteMutation.error;

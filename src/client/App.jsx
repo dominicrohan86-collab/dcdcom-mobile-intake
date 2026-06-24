@@ -18,8 +18,10 @@ export function App() {
   const [screen, setScreen] = React.useState("today");
   const [history, setHistory] = React.useState([]);
   const [selectedId, setSelectedId] = React.useState(null);
+  const [documentToOpen, setDocumentToOpen] = React.useState(null);
   const [notice, setNotice] = React.useState("");
   const [analysis, setAnalysis] = React.useState(null);
+  const online = useOnlineStatus();
   const bootstrap = useQuery({ queryKey: ["bootstrap"], queryFn: client.bootstrap });
   const inquiries = bootstrap.data?.inquiries || [];
 
@@ -35,15 +37,22 @@ export function App() {
 
   const analyze = useMutation({ mutationFn: (payload) => client.analyze(payload), onSuccess: setAnalysis });
   const create = useMutation({
-    mutationFn: async ({ file, ...payload }) => {
+    mutationFn: async ({ photos = [], ...payload }) => {
       const result = await client.createInquiry(payload);
-      if (file) await client.upload(result.id, file, file.type.startsWith("image/") ? "photo" : "other");
-      return result;
+      const uploads = await Promise.allSettled(photos.map((photo) => client.upload(result.id, photo, "photo")));
+      return {
+        ...result,
+        uploadedPhotoCount: uploads.filter((upload) => upload.status === "fulfilled").length,
+        failedPhotoCount: uploads.filter((upload) => upload.status === "rejected").length
+      };
     },
     onSuccess: async (result) => {
       setSelectedId(result.id);
       setAnalysis(result);
-      setNotice("Inquiry saved and added to the queue.");
+      const photoMessage = result.failedPhotoCount
+        ? ` ${result.uploadedPhotoCount} attached; ${result.failedPhotoCount} could not be uploaded.`
+        : result.uploadedPhotoCount ? ` ${result.uploadedPhotoCount} ${result.uploadedPhotoCount === 1 ? "photo" : "photos"} attached.` : "";
+      setNotice(`Inquiry saved and added to the queue.${photoMessage}`);
       await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
       go("detail");
     }
@@ -73,6 +82,11 @@ export function App() {
     go(target);
   }
 
+  function openDocument(documentId) {
+    setDocumentToOpen(documentId);
+    go("docs");
+  }
+
   async function handleInquiryDeleted(id, title) {
     queryClient.removeQueries({ queryKey: ["inquiry", id] });
     await Promise.all([
@@ -98,11 +112,25 @@ export function App() {
   else if (screen === "add") content = <AddInquiryScreen analyze={(payload) => analyze.mutate(payload)} create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} />;
   else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} integrations={bootstrap.data.integrations} selectedId={selectedId} notice={notice} setNotice={setNotice} />;
   else if (detail.isLoading || !detail.data) content = detail.error ? <EmptyState>Could not load this inquiry.</EmptyState> : <DetailLoading />;
-  else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} navigate={go} notice={notice} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
+  else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} navigate={go} openDocument={openDocument} notice={notice} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
   else if (screen === "email") content = <EmailScreen detail={detail.data} notice={notice} setNotice={setNotice} />;
   else if (screen === "proposal") content = <ProposalScreen detail={detail.data} notice={notice} setNotice={setNotice} />;
-  else if (screen === "docs") content = <DocsScreen inquiries={inquiries} selectedId={selectedId} selectInquiry={setSelectedId} detail={detail.data} navigate={go} />;
+  else if (screen === "docs") content = <DocsScreen inquiries={inquiries} selectedId={selectedId} selectInquiry={setSelectedId} detail={detail.data} navigate={go} initialDocumentId={documentToOpen} onDocumentOpened={() => setDocumentToOpen(null)} />;
   else content = <TodayScreen openWorkflow={openWorkflow} />;
 
-  return <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user}>{content}</Shell>;
+  return <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user}>{!online && <Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice>}{content}</Shell>;
+}
+
+function useOnlineStatus() {
+  const [online, setOnline] = React.useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
+  React.useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  return online;
 }

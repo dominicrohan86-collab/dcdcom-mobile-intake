@@ -8,6 +8,19 @@ const root = await mkdtemp(join(tmpdir(), "dcdcom-api-"));
 
 try {
   const env = await createLocalEnv({ root });
+  const secureEnv = { ...env, AUTH_SESSION_SECRET: "test-auth-secret" };
+  const unauthenticated = await request(secureEnv, "GET", "/api/bootstrap");
+  assert(unauthenticated.status === 401, "signed auth mode should reject missing session tokens");
+  const signedPrimaryHeaders = await authHeaders(secureEnv.AUTH_SESSION_SECRET, { email: "alex@dcdcom.com", fullName: "Alex Production", accountId: "acct_dcdcom" });
+  const signedBootstrap = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: signedPrimaryHeaders });
+  assert(signedBootstrap.status === 200 && signedBootstrap.body.accountId === "acct_dcdcom", "signed auth should resolve the token account");
+  const signedTenantHeaders = await authHeaders(secureEnv.AUTH_SESSION_SECRET, { email: "tenant@dcdcom.com", fullName: "Tenant User", accountId: "acct_second" });
+  const tenantBootstrap = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: signedTenantHeaders });
+  assert(tenantBootstrap.status === 200 && tenantBootstrap.body.accountId === "acct_second", "signed auth should bootstrap a second tenant");
+  assert(tenantBootstrap.body.inquiries.every((inquiry) => inquiry.id !== "inq_ntt_ashburn"), "second tenant should not reuse primary tenant seed ids");
+  const crossTenantDetail = await request(secureEnv, "GET", "/api/inquiries/inq_ntt_ashburn", undefined, { headers: signedTenantHeaders });
+  assert(crossTenantDetail.status === 404, "second tenant should not read primary tenant inquiries");
+
   const health = await request(env, "GET", "/api/health");
   assert(health.status === 200, "health should return 200");
   assert(health.body.fileStorage === "R2", "health should expose local R2");
@@ -21,6 +34,13 @@ try {
   const boot = await request(env, "GET", "/api/bootstrap");
   assert(boot.status === 200, "bootstrap should return 200");
   assert(boot.body.inquiries.length === 1, "bootstrap should seed one demo inquiry in fresh local env");
+  assert(boot.headers.get("server-timing")?.includes("app;dur="), "API responses should include server timing");
+  assert(boot.headers.get("x-response-time-ms"), "API responses should include response time metadata");
+
+  const pagedInquiries = await request(env, "GET", "/api/inquiries?limit=1&offset=0");
+  assert(pagedInquiries.status === 200, "paginated inquiry listing should return 200");
+  assert(pagedInquiries.body.inquiries.length === 1, "paginated inquiry listing should honor limit");
+  assert(pagedInquiries.body.total >= 1 && pagedInquiries.body.limit === 1, "paginated inquiry listing should include pagination metadata");
 
   const todayDate = dateKey(new Date(), "America/New_York");
   const today = await request(env, "GET", `/api/today?date=${todayDate}&timezone=America%2FNew_York`);
@@ -28,6 +48,11 @@ try {
   assert(today.body.date === todayDate, "today agenda should preserve the selected date");
   assert(today.body.actions.some((action) => action.type === "follow_up" && action.screen === "email"), "today agenda should expose a working follow-up action");
   assert(today.body.events.some((event) => event.kind === "follow_up" && event.startMinutes === 540), "today agenda should schedule actionable workflow work");
+  assert(today.body.calendar.state === "setup_required", "today agenda should explain when Google Calendar OAuth is not configured");
+  const calendarStatus = await request(env, "GET", "/api/integrations/google-calendar/status");
+  assert(calendarStatus.status === 200 && calendarStatus.body.connected === false, "calendar status should be safe before OAuth setup");
+  const calendarConnect = await request(env, "GET", "/api/integrations/google-calendar/connect");
+  assert(calendarConnect.status === 302 && calendarConnect.headers.get("location").includes("calendar=error"), "calendar connect should return users to the app with a setup error");
   const invalidToday = await request(env, "GET", "/api/today?date=not-a-date&timezone=America%2FNew_York");
   assert(invalidToday.status === 400, "today agenda should reject invalid dates");
 
@@ -74,6 +99,8 @@ try {
   assert(persistedProposal, "detail should include generated proposal document");
   assert(persistedProposal.body && persistedProposal.body.includes("Scope"), "proposal detail should include latest document body");
   assert(persistedProposal.metadata_json, "proposal detail should include document metadata");
+  const filesAfterProposal = await request(env, "GET", `/api/inquiries/${saved.body.id}/files`);
+  assert(filesAfterProposal.body.files.some((file) => file.category === "document_export" && file.content_type === "application/pdf"), "generated proposal should create a durable PDF export file");
 
   const editedProposal = await request(env, "POST", `/api/inquiries/${saved.body.id}/documents`, {
     documentId: proposal.body.documentId,
@@ -206,7 +233,7 @@ try {
   assert(siteVisit.status === 201, "site visit schedule should persist");
   assert(siteVisit.body.siteVisit.status === "scheduled", "site visit should be scheduled");
   assert(siteVisit.body.siteVisit.checklistItems.length >= 3, "site visit should include checklist items");
-  assert(siteVisit.body.calendarSync.status === "queued", "site visit should queue a calendar hold");
+  assert(siteVisit.body.calendarSync.status === "not_connected", "site visit should clearly report when no real Google Calendar connection exists");
 
   const checklistItem = siteVisit.body.siteVisit.checklistItems[0];
   const checklistUpdate = await request(env, "PATCH", `/api/checklist-items/${checklistItem.id}`, { status: "done" });
@@ -231,7 +258,13 @@ try {
 
   const files = await request(env, "GET", `/api/inquiries/${saved.body.id}/files`);
   assert(files.status === 200, "file listing should return 200");
-  assert(files.body.files.length === 1, "file listing should include uploaded file");
+  assert(files.body.files.some((file) => file.file_name === "floor-plan.txt" && file.content_type === "text/plain"), "file listing should include uploaded file");
+
+  const badImageForm = new FormData();
+  badImageForm.append("category", "photo");
+  badImageForm.append("file", new File(["not an image"], "fake.png", { type: "image/png" }));
+  const badImage = await request(env, "POST", `/api/inquiries/${saved.body.id}/files`, badImageForm);
+  assert(badImage.status === 415, "upload hardening should reject fake image files");
 
   const photoForm = new FormData();
   photoForm.append("category", "photo");
@@ -244,6 +277,8 @@ try {
 
   const download = await rawRequest(env, "GET", `/api/files/${upload.body.file.id}`);
   assert(download.status === 200, "file download should return 200");
+  assert(download.headers.get("content-security-policy") === "sandbox", "file downloads should be sandboxed");
+  assert(download.headers.get("cache-control")?.includes("no-store"), "file downloads should avoid shared caching");
   assert(await download.text() === "floor plan placeholder", "file download should return uploaded bytes");
 
   const settings = await request(env, "PUT", "/api/settings", {
@@ -260,18 +295,45 @@ try {
 
   const sync = await request(env, "POST", `/api/inquiries/${saved.body.id}/sync`, { provider: "crm" });
   assert(sync.status === 201, "sync should return 201");
-  assert(sync.body.sync.status === "success", "sync should persist success");
+  assert(sync.body.sync.status === "queued", "sync should queue safely without provider credentials");
+  assert(sync.body.sync.nextRetryAfterSeconds === 300, "queued sync should expose retry guidance");
 
-  const status = await request(env, "PATCH", `/api/inquiries/${saved.body.id}/status`, { status: "review" });
+  const originalFetch = globalThis.fetch;
+  const providerRequests = [];
+  try {
+    globalThis.fetch = async (url, init) => {
+      providerRequests.push({ url, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ id: "crm_live_123" }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const liveSync = await request({ ...env, CRM_PROVIDER_WEBHOOK: "https://crm.example/sync" }, "POST", `/api/inquiries/${saved.body.id}/sync`, { provider: "crm" });
+    assert(liveSync.status === 201, "configured sync should return 201");
+    assert(liveSync.body.sync.status === "success", "configured sync should record provider success");
+    assert(liveSync.body.sync.response.id === "crm_live_123", "configured sync should expose provider response");
+    assert(providerRequests[0].url === "https://crm.example/sync", "configured sync should call the provider webhook");
+    assert(providerRequests[0].body.inquiryId === saved.body.id, "configured sync should send the inquiry id to the provider");
+
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503, headers: { "content-type": "application/json" } });
+    const failedSync = await request({ ...env, CRM_PROVIDER_WEBHOOK: "https://crm.example/sync" }, "POST", `/api/inquiries/${saved.body.id}/sync`, { provider: "crm" });
+    assert(failedSync.status === 201, "provider sync failure should still persist an event");
+    assert(failedSync.body.sync.status === "failed", "provider sync failure should be explicit");
+    assert(failedSync.body.sync.response.error === "temporarily unavailable", "provider sync failure should expose provider response body");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const invalidStatus = await request(env, "PATCH", `/api/inquiries/${saved.body.id}/status`, { status: "review" });
+  assert(invalidStatus.status === 409, "status update should reject invalid workflow jumps");
+  assert(invalidStatus.body.allowed.includes("proposal"), "status rejection should expose allowed next states");
+  const status = await request(env, "PATCH", `/api/inquiries/${saved.body.id}/status`, { status: "proposal" });
   assert(status.status === 200, "status update should return 200");
-  assert(status.body.inquiry.status === "review", "status update should persist review");
+  assert(status.body.inquiry.status === "proposal", "status update should persist valid workflow transitions");
 
-  const storedDocumentKey = files.body.files[0].storage_key;
+  const storedDocumentKey = files.body.files.find((file) => file.file_name === "floor-plan.txt").storage_key;
   const storedPhoto = filesAfterPhoto.body.files.find((file) => file.file_name === "site-photo.png");
   const deletedInquiry = await request(env, "DELETE", `/api/inquiries/${saved.body.id}`);
   assert(deletedInquiry.status === 200, "inquiry deletion should return 200");
   assert(deletedInquiry.body.deleted === true, "inquiry deletion should confirm deletion");
-  assert(deletedInquiry.body.inquiry.deletedFiles === 2, "inquiry deletion should report removed stored files");
+  assert(deletedInquiry.body.inquiry.deletedFiles >= 2, "inquiry deletion should report removed stored files");
   assert(await env.FILES.get(storedDocumentKey) === null, "inquiry deletion should remove document objects from storage");
   assert(await env.FILES.get(storedPhoto.storage_key) === null, "inquiry deletion should remove photo objects from storage");
   const deletedDetail = await request(env, "GET", `/api/inquiries/${saved.body.id}`);
@@ -298,14 +360,16 @@ try {
   await rm(root, { recursive: true, force: true });
 }
 
-async function request(env, method, path, payload) {
-  const response = await rawRequest(env, method, path, payload);
-  const body = await response.json();
+async function request(env, method, path, payload, options = {}) {
+  const response = await rawRequest(env, method, path, payload, options);
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : null;
   return { status: response.status, body, headers: response.headers };
 }
 
-async function rawRequest(env, method, path, payload) {
+async function rawRequest(env, method, path, payload, options = {}) {
   const init = { method, headers: new Headers({ "oai-authenticated-user-email": "alex@dcdcom.com" }) };
+  for (const [key, value] of Object.entries(options.headers || {})) init.headers.set(key, value);
   if (payload instanceof FormData) {
     init.body = payload;
   } else if (payload !== undefined) {
@@ -313,6 +377,25 @@ async function rawRequest(env, method, path, payload) {
     init.body = JSON.stringify(payload);
   }
   return handleApi(new Request(`http://local.test${path}`, init), env);
+}
+
+async function authHeaders(secret, payload) {
+  const body = base64UrlEncode(JSON.stringify({ sub: `user_${payload.email.replace(/[^a-z0-9]+/g, "_")}`, email: payload.email, fullName: payload.fullName, accountId: payload.accountId, exp: Math.floor(Date.now() / 1000) + 3600 }));
+  const signature = await hmac(secret, body);
+  return { authorization: `Bearer ${body}.${signature}` };
+}
+
+async function hmac(secret, value) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(value));
+  return base64UrlEncode(new Uint8Array(signature));
+}
+
+function base64UrlEncode(value) {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function assert(condition, message) {

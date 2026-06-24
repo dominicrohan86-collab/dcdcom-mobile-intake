@@ -9,6 +9,17 @@ import {
 
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${crypto.randomUUID()}`;
+const STATUS_TRANSITIONS = {
+  new: ["needs_info", "estimating", "site_visit", "proposal", "lost", "archived"],
+  needs_info: ["estimating", "site_visit", "proposal", "lost", "archived"],
+  estimating: ["needs_info", "site_visit", "proposal", "lost", "archived"],
+  site_visit: ["needs_info", "estimating", "proposal", "lost", "archived"],
+  proposal: ["needs_info", "estimating", "review", "won", "lost", "archived"],
+  review: ["proposal", "won", "lost", "archived"],
+  won: ["archived"],
+  lost: ["archived"],
+  archived: []
+};
 
 export async function listInquiries(env, accountId, filters = {}) {
   const db = getDb(env);
@@ -33,7 +44,11 @@ export async function listInquiries(env, accountId, filters = {}) {
     .leftJoin(missingRequirements, and(eq(missingRequirements.inquiryId, inquiries.id), inArray(missingRequirements.status, ["open", "requested"])))
     .where(and(...predicates)).groupBy(inquiries.id).orderBy(desc(inquiries.receivedAt));
   const priority = { urgent: 0, high: 1, medium: 2, low: 3 };
-  return rows.sort((a, b) => (priority[a.priority] ?? 4) - (priority[b.priority] ?? 4));
+  const sorted = rows.sort((a, b) => (priority[a.priority] ?? 4) - (priority[b.priority] ?? 4));
+  if (filters.limit == null && filters.offset == null) return sorted;
+  const offset = Number(filters.offset || 0);
+  const limit = Number(filters.limit || 30);
+  return { inquiries: sorted.slice(offset, offset + limit), total: sorted.length, limit, offset, hasMore: offset + limit < sorted.length };
 }
 
 export async function getInquiryDetail(env, accountId, inquiryId) {
@@ -181,15 +196,15 @@ export async function getTodayWorkspace(env, accountId, userId, selectedDate, ti
   return { date: selectedDate, timezone, events, actions: actions.slice(0, 6), generatedAt: now() };
 }
 
-export async function createActivity(env, accountId, inquiryId, actorUserId, eventType, summary, metadata = {}) {
+export async function createActivity(env, accountId, inquiryId, actorUserId, eventType, summary, metadata = {}, db = getDb(env)) {
   const eventId = id("evt");
-  await getDb(env).insert(activityEvents).values({ id: eventId, accountId, inquiryId, actorUserId, eventType, summary, metadataJson: JSON.stringify(metadata) });
+  await db.insert(activityEvents).values({ id: eventId, accountId, inquiryId, actorUserId, eventType, summary, metadataJson: JSON.stringify(metadata) });
   return { id: eventId };
 }
 
-export async function createAuditLog(env, accountId, actorUserId, entityType, entityId, action, before = null, after = null) {
+export async function createAuditLog(env, accountId, actorUserId, entityType, entityId, action, before = null, after = null, db = getDb(env)) {
   const auditId = id("audit");
-  await getDb(env).insert(auditLog).values({ id: auditId, accountId, actorUserId, entityType, entityId, action, beforeJson: before ? JSON.stringify(before) : null, afterJson: after ? JSON.stringify(after) : null });
+  await db.insert(auditLog).values({ id: auditId, accountId, actorUserId, entityType, entityId, action, beforeJson: before ? JSON.stringify(before) : null, afterJson: after ? JSON.stringify(after) : null });
   return { id: auditId };
 }
 
@@ -219,10 +234,15 @@ export async function updateUserProfile(env, accountId, userId, payload) {
 }
 
 export async function listIntegrations(env, accountId) {
-  return (await getDb(env).select().from(integrationConnections).where(eq(integrationConnections.accountId, accountId)).orderBy(asc(integrationConnections.provider), asc(integrationConnections.displayName))).map(snake);
+  return (await getDb(env).select().from(integrationConnections).where(eq(integrationConnections.accountId, accountId)).orderBy(asc(integrationConnections.provider), asc(integrationConnections.displayName))).map((row) => {
+    const item = snake(row);
+    delete item.metadata_json;
+    return item;
+  });
 }
 
 export async function upsertIntegration(env, accountId, userId, provider) {
+  if (provider === "calendar") throw new Error("Use the Google Calendar connection flow to connect a calendar.");
   const db = getDb(env);
   const displayName = integrationDisplayName(provider);
   const [existing] = await db.select().from(integrationConnections).where(and(eq(integrationConnections.accountId, accountId), eq(integrationConnections.provider, provider), eq(integrationConnections.displayName, displayName))).limit(1);
@@ -242,20 +262,57 @@ export async function syncInquiry(env, accountId, inquiryId, userId, provider = 
   const db = getDb(env);
   let [integration] = await db.select({ id: integrationConnections.id }).from(integrationConnections).where(and(eq(integrationConnections.accountId, accountId), eq(integrationConnections.provider, provider), eq(integrationConnections.status, "connected"))).limit(1);
   if (!integration) integration = await createDefaultIntegration(env, accountId, userId, provider);
-  const [inquiry] = await db.select({ id: inquiries.id, title: inquiries.title }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
+  const [entry] = await db.select({ inquiry: inquiries, company_name: companies.name, contact_name: contacts.fullName, contact_email: contacts.email, contact_phone: contacts.phone, city: sites.city, region: sites.region })
+    .from(inquiries)
+    .leftJoin(companies, eq(companies.id, inquiries.companyId))
+    .leftJoin(contacts, eq(contacts.id, inquiries.contactId))
+    .leftJoin(sites, eq(sites.id, inquiries.siteId))
+    .where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
+  const inquiry = entry?.inquiry;
   if (!inquiry) return null;
   const syncId = id("sync");
   const externalId = `${provider}_${inquiryId}`;
-  await db.insert(syncEvents).values({ id: syncId, integrationId: integration.id, inquiryId, status: "success", operation: "upsert_opportunity", externalId });
-  await createActivity(env, accountId, inquiryId, userId, "integration.synced", `Synced ${inquiry.title} to ${provider.toUpperCase()}`, { syncId, provider, externalId });
-  await createAuditLog(env, accountId, userId, "inquiry", inquiryId, "integration.synced", null, { provider, externalId });
-  return { id: syncId, provider, externalId, status: "success" };
+  const operation = "upsert_opportunity";
+  const request = {
+    externalId,
+    inquiryId,
+    title: inquiry.title,
+    status: inquiry.status,
+    serviceType: inquiry.serviceType,
+    priority: inquiry.priority,
+    estimate: { lowCents: inquiry.estimatedLowCents, highCents: inquiry.estimatedHighCents },
+    company: entry.company_name,
+    contact: { name: entry.contact_name, email: entry.contact_email, phone: entry.contact_phone },
+    site: { city: entry.city, region: entry.region }
+  };
+  const webhook = integrationWebhook(env, provider);
+  if (!webhook) {
+    await db.insert(syncEvents).values({ id: syncId, integrationId: integration.id, inquiryId, status: "queued", operation, externalId, errorMessage: `${provider.toUpperCase()} provider webhook is not configured.` });
+    await createActivity(env, accountId, inquiryId, userId, "integration.queued", `Queued ${inquiry.title} for ${provider.toUpperCase()} sync`, { syncId, provider, externalId });
+    return { id: syncId, provider, externalId, status: "queued", operation, nextRetryAfterSeconds: 300 };
+  }
+  try {
+    const response = await fetch(webhook, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
+    const responseText = await response.text();
+    const responseBody = safeJson(responseText) || { body: responseText.slice(0, 1200) };
+    const status = response.ok ? "success" : "failed";
+    await db.insert(syncEvents).values({ id: syncId, integrationId: integration.id, inquiryId, status, operation, externalId: responseBody.id || responseBody.externalId || externalId, errorMessage: response.ok ? null : `Provider returned ${response.status}` });
+    await createActivity(env, accountId, inquiryId, userId, response.ok ? "integration.synced" : "integration.failed", `${response.ok ? "Synced" : "Could not sync"} ${inquiry.title} to ${provider.toUpperCase()}`, { syncId, provider, externalId, response: responseBody });
+    if (response.ok) await createAuditLog(env, accountId, userId, "inquiry", inquiryId, "integration.synced", null, { provider, externalId });
+    return { id: syncId, provider, externalId, status, operation, response: responseBody };
+  } catch (error) {
+    await db.insert(syncEvents).values({ id: syncId, integrationId: integration.id, inquiryId, status: "failed", operation, externalId, errorMessage: error.message });
+    await createActivity(env, accountId, inquiryId, userId, "integration.failed", `Could not sync ${inquiry.title} to ${provider.toUpperCase()}`, { syncId, provider, externalId, error: error.message });
+    return { id: syncId, provider, externalId, status: "failed", operation, error: error.message, nextRetryAfterSeconds: 300 };
+  }
 }
 
 export async function updateInquiryStatus(env, accountId, inquiryId, userId, status) {
   const db = getDb(env);
   const [before] = await db.select({ id: inquiries.id, status: inquiries.status, title: inquiries.title }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
   if (!before) return null;
+  const allowed = STATUS_TRANSITIONS[before.status] || [];
+  if (status !== before.status && !allowed.includes(status)) return { error: `Cannot move inquiry from ${before.status} to ${status}.`, allowed, statusCode: 409 };
   await db.update(inquiries).set({ status, updatedAt: now() }).where(eq(inquiries.id, inquiryId));
   const after = { ...before, status };
   await createActivity(env, accountId, inquiryId, userId, "inquiry.status_updated", `Moved ${before.title} to ${status}`, { from: before.status, to: status });
@@ -298,135 +355,151 @@ export async function updateInquiryDetails(env, accountId, inquiryId, userId, pa
 
 export async function createInquiry(env, accountId, userId, payload) {
   const db = getDb(env);
-  const inquiryId = id("inq"), companyId = id("co"), contactId = id("ct"), siteId = id("site"), sourceId = id("src");
-  const company = payload.company || "Unknown Company";
-  const location = payload.location || {};
-  await db.insert(companies).values({ id: companyId, accountId, name: company, website: payload.website || null, industry: payload.industry || null });
-  await db.insert(contacts).values({ id: contactId, accountId, companyId, fullName: payload.contact?.fullName || "Unknown Contact", title: payload.contact?.title || null, email: payload.contact?.email || null, phone: payload.contact?.phone || null, preferredChannel: payload.sourceChannel || "unknown" });
-  await db.insert(sites).values({ id: siteId, accountId, companyId, name: payload.siteName || `${company} Site`, city: location.city || null, region: location.region || null, country: location.country || "US", siteType: payload.siteType || "unknown", accessNotes: payload.accessNotes || null });
-  await db.insert(inquiries).values({ id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title: payload.title || `${company} Inquiry`, serviceType: payload.serviceType || "other", sourceChannel: payload.sourceChannel || "manual", priority: payload.priority || "medium", workload: payload.workload || "medium", status: "new", confidenceScore: payload.confidenceScore || 0, leaseEndDate: payload.leaseEndDate || null, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() });
-  await db.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || null, sender: payload.sender || null, rawText: payload.rawText || "", capturedByUserId: userId, capturedAt: now() });
-  await db.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || null, body: payload.rawText || "", status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
-  await createActivity(env, accountId, inquiryId, userId, "inquiry.created", `Created inquiry ${payload.title || company}`, { sourceId });
-  return { id: inquiryId, companyId, contactId, siteId, sourceId };
+  return db.transaction(async (tx) => {
+    const inquiryId = id("inq"), companyId = id("co"), contactId = id("ct"), siteId = id("site"), sourceId = id("src");
+    const company = payload.company || "Unknown Company";
+    const location = payload.location || {};
+    await tx.insert(companies).values({ id: companyId, accountId, name: company, website: payload.website || null, industry: payload.industry || null });
+    await tx.insert(contacts).values({ id: contactId, accountId, companyId, fullName: payload.contact?.fullName || "Unknown Contact", title: payload.contact?.title || null, email: payload.contact?.email || null, phone: payload.contact?.phone || null, preferredChannel: payload.sourceChannel || "unknown" });
+    await tx.insert(sites).values({ id: siteId, accountId, companyId, name: payload.siteName || `${company} Site`, city: location.city || null, region: location.region || null, country: location.country || "US", siteType: payload.siteType || "unknown", accessNotes: payload.accessNotes || null });
+    await tx.insert(inquiries).values({ id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title: payload.title || `${company} Inquiry`, serviceType: payload.serviceType || "other", sourceChannel: payload.sourceChannel || "manual", priority: payload.priority || "medium", workload: payload.workload || "medium", status: "new", confidenceScore: payload.confidenceScore || 0, leaseEndDate: payload.leaseEndDate || null, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() });
+    await tx.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || null, sender: payload.sender || null, rawText: payload.rawText || "", capturedByUserId: userId, capturedAt: now() });
+    await tx.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || null, body: payload.rawText || "", status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
+    await createActivity(env, accountId, inquiryId, userId, "inquiry.created", `Created inquiry ${payload.title || company}`, { sourceId }, tx);
+    return { id: inquiryId, companyId, contactId, siteId, sourceId };
+  });
 }
 
 export async function createInquiryFromExtraction(env, accountId, userId, payload, analysis) {
   const db = getDb(env);
-  const extraction = analysis.extraction;
-  const companyId = await findOrCreateCompany(env, accountId, extraction.company);
-  const contactId = id("ct"), siteId = id("site"), inquiryId = id("inq"), sourceId = id("src"), summaryId = id("sum");
-  const titleLocation = [extraction.site.city, extraction.site.region].filter(Boolean).join(", ");
-  const title = `${extraction.company.name}${titleLocation ? ` - ${titleLocation}` : ""}`;
-  const status = extraction.missingRequirements.length ? "needs_info" : "estimating";
-  await db.insert(contacts).values({ id: contactId, accountId, companyId, fullName: extraction.contact.fullName, email: extraction.contact.email, phone: extraction.contact.phone, preferredChannel: extraction.contact.preferredChannel });
-  await db.insert(sites).values({ id: siteId, accountId, companyId, name: extraction.site.name, city: extraction.site.city, region: extraction.site.region, country: extraction.site.country, siteType: extraction.site.siteType, accessNotes: extraction.site.accessNotes });
-  await db.insert(inquiries).values({ id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title, serviceType: extraction.service.type, sourceChannel: payload.sourceChannel || "manual", priority: extraction.priority, workload: extraction.workload, status, estimatedLowCents: extraction.estimateRange.lowCents, estimatedHighCents: extraction.estimateRange.highCents, confidenceScore: extraction.confidenceScore, leaseEndDate: extraction.timeline.leaseEndDate, requestedDueDate: extraction.timeline.requestedDueDate, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() });
-  await db.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || "AI intake source", sender: payload.sender || extraction.contact.email || extraction.contact.phone || extraction.contact.fullName, rawText: payload.rawText, capturedByUserId: userId, capturedAt: now() });
-  await db.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || "AI intake source", body: payload.rawText, status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
-  await db.insert(aiSummaries).values({ id: summaryId, inquiryId, summaryType: "intake", body: extraction.summary, modelName: analysis.model, confidenceScore: extraction.confidenceScore, generatedByUserId: userId, generatedAt: now() });
-  await persistExtractedFields(env, inquiryId, sourceId, extraction);
-  await persistMissingRequirements(env, inquiryId, extraction.missingRequirements);
-  const aiRun = await recordAiRun(env, accountId, inquiryId, userId, { runType: "intake_extraction", provider: analysis.mode === "live" ? "openai" : "local", modelName: analysis.model, status: analysis.mode === "live" ? "success" : "fallback", inputPreview: payload.rawText, output: extraction, errorMessage: analysis.error || null, latencyMs: analysis.latencyMs || null });
-  await createActivity(env, accountId, inquiryId, userId, "ai.intake_extracted", `${analysis.mode === "live" ? "AI" : "Fallback AI"} created structured intake for ${title}`, { aiRunId: aiRun.id, missingCount: extraction.missingRequirements.length });
-  return { id: inquiryId, companyId, contactId, siteId, sourceId, aiRunId: aiRun.id, status, missingCount: extraction.missingRequirements.length };
+  return db.transaction(async (tx) => {
+    const extraction = analysis.extraction;
+    const companyId = await findOrCreateCompany(env, accountId, extraction.company, tx);
+    const contactId = id("ct"), siteId = id("site"), inquiryId = id("inq"), sourceId = id("src"), summaryId = id("sum");
+    const titleLocation = [extraction.site.city, extraction.site.region].filter(Boolean).join(", ");
+    const title = `${extraction.company.name}${titleLocation ? ` - ${titleLocation}` : ""}`;
+    const status = extraction.missingRequirements.length ? "needs_info" : "estimating";
+    await tx.insert(contacts).values({ id: contactId, accountId, companyId, fullName: extraction.contact.fullName, email: extraction.contact.email, phone: extraction.contact.phone, preferredChannel: extraction.contact.preferredChannel });
+    await tx.insert(sites).values({ id: siteId, accountId, companyId, name: extraction.site.name, city: extraction.site.city, region: extraction.site.region, country: extraction.site.country, siteType: extraction.site.siteType, accessNotes: extraction.site.accessNotes });
+    await tx.insert(inquiries).values({ id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title, serviceType: extraction.service.type, sourceChannel: payload.sourceChannel || "manual", priority: extraction.priority, workload: extraction.workload, status, estimatedLowCents: extraction.estimateRange.lowCents, estimatedHighCents: extraction.estimateRange.highCents, confidenceScore: extraction.confidenceScore, leaseEndDate: extraction.timeline.leaseEndDate, requestedDueDate: extraction.timeline.requestedDueDate, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() });
+    await tx.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || "AI intake source", sender: payload.sender || extraction.contact.email || extraction.contact.phone || extraction.contact.fullName, rawText: payload.rawText, capturedByUserId: userId, capturedAt: now() });
+    await tx.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || "AI intake source", body: payload.rawText, status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
+    await tx.insert(aiSummaries).values({ id: summaryId, inquiryId, summaryType: "intake", body: extraction.summary, modelName: analysis.model, confidenceScore: extraction.confidenceScore, generatedByUserId: userId, generatedAt: now() });
+    await persistExtractedFields(env, inquiryId, sourceId, extraction, tx);
+    await persistMissingRequirements(env, inquiryId, extraction.missingRequirements, tx);
+    const aiRun = await recordAiRun(env, accountId, inquiryId, userId, { runType: "intake_extraction", provider: analysis.mode === "live" ? "openai" : "local", modelName: analysis.model, status: analysis.mode === "live" ? "success" : "fallback", inputPreview: payload.rawText, output: extraction, errorMessage: analysis.error || null, latencyMs: analysis.latencyMs || null }, tx);
+    await createActivity(env, accountId, inquiryId, userId, "ai.intake_extracted", `${analysis.mode === "live" ? "AI" : "Fallback AI"} created structured intake for ${title}`, { aiRunId: aiRun.id, missingCount: extraction.missingRequirements.length }, tx);
+    return { id: inquiryId, companyId, contactId, siteId, sourceId, aiRunId: aiRun.id, status, missingCount: extraction.missingRequirements.length };
+  });
 }
 
-export async function recordAiRun(env, accountId, inquiryId, userId, run) {
+export async function recordAiRun(env, accountId, inquiryId, userId, run, db = getDb(env)) {
   const runId = id("airun");
-  await getDb(env).insert(aiRuns).values({ id: runId, accountId, inquiryId: inquiryId || null, runType: run.runType, provider: run.provider || "openai", modelName: run.modelName || null, status: run.status, inputPreview: String(run.inputPreview || "").slice(0, 1200), outputJson: JSON.stringify(run.output || {}), errorMessage: run.errorMessage || null, latencyMs: run.latencyMs || null, createdByUserId: userId });
+  await db.insert(aiRuns).values({ id: runId, accountId, inquiryId: inquiryId || null, runType: run.runType, provider: run.provider || "openai", modelName: run.modelName || null, status: run.status, inputPreview: String(run.inputPreview || "").slice(0, 1200), outputJson: JSON.stringify(run.output || {}), errorMessage: run.errorMessage || null, latencyMs: run.latencyMs || null, createdByUserId: userId });
   return { id: runId };
 }
 
 export async function createGeneratedWorkProduct(env, accountId, inquiryId, userId, type, analysis) {
   const db = getDb(env);
-  const product = analysis.product;
-  const documentId = id("doc"), versionId = id("docver");
-  const documentType = normalizeDocumentType(product.documentType || type);
-  await db.insert(documents).values({ id: documentId, inquiryId, documentType, title: product.title, status: product.approvalRequired ? "review" : "draft", currentVersion: 1, createdByUserId: userId, createdAt: now(), updatedAt: now() });
-  await db.insert(documentVersions).values({ id: versionId, documentId, version: 1, subject: product.subject, body: product.body, metadataJson: JSON.stringify({ confidenceScore: product.confidenceScore, approvalRequired: product.approvalRequired, missingRiskNotes: product.missingRiskNotes, nextActions: product.nextActions, estimate: product.estimate, mode: analysis.mode, model: analysis.model }), generatedByAi: true, createdByUserId: userId, createdAt: now() });
-  let estimateId = null;
-  if (["estimate", "proposal"].includes(documentType) && product.estimate.lowCents != null && product.estimate.highCents != null) estimateId = await createEstimateRecords(env, inquiryId, userId, product);
-  let proposalId = null;
-  if (documentType === "proposal") proposalId = await createProposalRecords(env, inquiryId, estimateId, documentId, product);
-  if (documentType === "site_checklist") await createSiteVisitRecords(env, inquiryId, userId, product);
-  const aiRun = await recordAiRun(env, accountId, inquiryId, userId, { runType: runTypeForDocument(documentType), provider: analysis.mode === "live" ? "openai" : "local", modelName: analysis.model, status: analysis.mode === "live" ? "success" : "fallback", inputPreview: product.title, output: product, errorMessage: analysis.error || null, latencyMs: analysis.latencyMs || null });
-  await db.insert(aiSummaries).values({ id: id("sum"), inquiryId, summaryType: documentType === "proposal" ? "proposal" : documentType === "scope_of_work" ? "scope" : "email", body: `Generated ${product.title}. ${product.nextActions.join(" ")}`, modelName: analysis.model, confidenceScore: product.confidenceScore, generatedByUserId: userId });
-  await createActivity(env, accountId, inquiryId, userId, `ai.${runTypeForDocument(documentType)}`, `Generated ${product.title}`, { aiRunId: aiRun.id, documentId, versionId, estimateId, proposalId });
-  return { documentId, versionId, estimateId, proposalId, aiRunId: aiRun.id, product };
+  const saved = await db.transaction(async (tx) => {
+    const product = analysis.product;
+    const documentId = id("doc"), versionId = id("docver");
+    const documentType = normalizeDocumentType(product.documentType || type);
+    await tx.insert(documents).values({ id: documentId, inquiryId, documentType, title: product.title, status: product.approvalRequired ? "review" : "draft", currentVersion: 1, createdByUserId: userId, createdAt: now(), updatedAt: now() });
+    await tx.insert(documentVersions).values({ id: versionId, documentId, version: 1, subject: product.subject, body: product.body, metadataJson: JSON.stringify({ confidenceScore: product.confidenceScore, approvalRequired: product.approvalRequired, missingRiskNotes: product.missingRiskNotes, nextActions: product.nextActions, estimate: product.estimate, mode: analysis.mode, model: analysis.model }), generatedByAi: true, createdByUserId: userId, createdAt: now() });
+    let estimateId = null;
+    if (["estimate", "proposal"].includes(documentType) && product.estimate.lowCents != null && product.estimate.highCents != null) estimateId = await createEstimateRecords(env, inquiryId, userId, product, tx);
+    let proposalId = null;
+    if (documentType === "proposal") proposalId = await createProposalRecords(env, inquiryId, estimateId, documentId, product, tx);
+    if (documentType === "site_checklist") await createSiteVisitRecords(env, inquiryId, userId, product, tx);
+    const aiRun = await recordAiRun(env, accountId, inquiryId, userId, { runType: runTypeForDocument(documentType), provider: analysis.mode === "live" ? "openai" : "local", modelName: analysis.model, status: analysis.mode === "live" ? "success" : "fallback", inputPreview: product.title, output: product, errorMessage: analysis.error || null, latencyMs: analysis.latencyMs || null }, tx);
+    await tx.insert(aiSummaries).values({ id: id("sum"), inquiryId, summaryType: documentType === "proposal" ? "proposal" : documentType === "scope_of_work" ? "scope" : "email", body: `Generated ${product.title}. ${product.nextActions.join(" ")}`, modelName: analysis.model, confidenceScore: product.confidenceScore, generatedByUserId: userId });
+    await createActivity(env, accountId, inquiryId, userId, `ai.${runTypeForDocument(documentType)}`, `Generated ${product.title}`, { aiRunId: aiRun.id, documentId, versionId, estimateId, proposalId }, tx);
+    return { documentId, versionId, estimateId, proposalId, aiRunId: aiRun.id, product, documentType, title: product.title, subject: product.subject, body: product.body, currentVersion: 1 };
+  });
+  const exportFile = await createDocumentExportFile(env, accountId, inquiryId, userId, saved).catch((error) => ({ error: error.message }));
+  return { ...saved, exportFile };
 }
 
 export async function saveDocumentDraft(env, accountId, inquiryId, userId, payload) {
   const db = getDb(env);
-  const documentType = normalizeDocumentType(payload.documentType || "other");
-  const title = payload.title || titleForDocument(documentType);
-  const subject = payload.subject || null;
-  const body = payload.body || "";
-  const metadata = { ...(payload.metadata || {}), manuallyEdited: true, savedBy: userId };
-  let document = null;
-  if (payload.documentId) {
-    [document] = await db.select({ document: documents }).from(documents).innerJoin(inquiries, eq(inquiries.id, documents.inquiryId)).where(and(eq(inquiries.accountId, accountId), eq(documents.inquiryId, inquiryId), eq(documents.id, payload.documentId))).limit(1);
-    document = document?.document;
-  }
-  if (!document) {
-    const documentId = id("doc"), versionId = id("docver");
-    await db.insert(documents).values({ id: documentId, inquiryId, documentType, title, status: "draft", currentVersion: 1, createdByUserId: userId, createdAt: now(), updatedAt: now() });
-    await db.insert(documentVersions).values({ id: versionId, documentId, version: 1, subject, body, metadataJson: JSON.stringify(metadata), generatedByAi: false, createdByUserId: userId, createdAt: now() });
-    await createActivity(env, accountId, inquiryId, userId, "document.created", `Saved ${title}`, { documentId, versionId, documentType });
-    await createAuditLog(env, accountId, userId, "document", documentId, "document.created", null, { documentType, title, version: 1 });
-    return { documentId, versionId, documentType, title, subject, body, metadata, currentVersion: 1 };
-  }
-  const nextVersion = Number(document.currentVersion || 0) + 1;
-  const versionId = id("docver");
-  await db.insert(documentVersions).values({ id: versionId, documentId: document.id, version: nextVersion, subject, body, metadataJson: JSON.stringify(metadata), generatedByAi: false, createdByUserId: userId, createdAt: now() });
-  await db.update(documents).set({ title, status: payload.status || "draft", currentVersion: nextVersion, updatedAt: now() }).where(eq(documents.id, document.id));
-  await createActivity(env, accountId, inquiryId, userId, "document.version_saved", `Saved ${title} v${nextVersion}`, { documentId: document.id, versionId, documentType });
-  await createAuditLog(env, accountId, userId, "document", document.id, "document.version_saved", { id: document.id, current_version: document.currentVersion, status: document.status }, { id: document.id, current_version: nextVersion, status: payload.status || "draft" });
-  return { documentId: document.id, versionId, documentType, title, subject, body, metadata, currentVersion: nextVersion };
+  const saved = await db.transaction(async (tx) => {
+    const documentType = normalizeDocumentType(payload.documentType || "other");
+    const title = payload.title || titleForDocument(documentType);
+    const subject = payload.subject || null;
+    const body = payload.body || "";
+    const metadata = { ...(payload.metadata || {}), manuallyEdited: true, savedBy: userId };
+    let document = null;
+    if (payload.documentId) {
+      [document] = await tx.select({ document: documents }).from(documents).innerJoin(inquiries, eq(inquiries.id, documents.inquiryId)).where(and(eq(inquiries.accountId, accountId), eq(documents.inquiryId, inquiryId), eq(documents.id, payload.documentId))).limit(1);
+      document = document?.document;
+    }
+    if (!document) {
+      const documentId = id("doc"), versionId = id("docver");
+      await tx.insert(documents).values({ id: documentId, inquiryId, documentType, title, status: "draft", currentVersion: 1, createdByUserId: userId, createdAt: now(), updatedAt: now() });
+      await tx.insert(documentVersions).values({ id: versionId, documentId, version: 1, subject, body, metadataJson: JSON.stringify(metadata), generatedByAi: false, createdByUserId: userId, createdAt: now() });
+      await createActivity(env, accountId, inquiryId, userId, "document.created", `Saved ${title}`, { documentId, versionId, documentType }, tx);
+      await createAuditLog(env, accountId, userId, "document", documentId, "document.created", null, { documentType, title, version: 1 }, tx);
+      return { documentId, versionId, documentType, title, subject, body, metadata, currentVersion: 1 };
+    }
+    const nextVersion = Number(document.currentVersion || 0) + 1;
+    const versionId = id("docver");
+    await tx.insert(documentVersions).values({ id: versionId, documentId: document.id, version: nextVersion, subject, body, metadataJson: JSON.stringify(metadata), generatedByAi: false, createdByUserId: userId, createdAt: now() });
+    await tx.update(documents).set({ title, status: payload.status || "draft", currentVersion: nextVersion, updatedAt: now() }).where(eq(documents.id, document.id));
+    await createActivity(env, accountId, inquiryId, userId, "document.version_saved", `Saved ${title} v${nextVersion}`, { documentId: document.id, versionId, documentType }, tx);
+    await createAuditLog(env, accountId, userId, "document", document.id, "document.version_saved", { id: document.id, current_version: document.currentVersion, status: document.status }, { id: document.id, current_version: nextVersion, status: payload.status || "draft" }, tx);
+    return { documentId: document.id, versionId, documentType, title, subject, body, metadata, currentVersion: nextVersion };
+  });
+  const exportFile = await createDocumentExportFile(env, accountId, inquiryId, userId, saved).catch((error) => ({ error: error.message }));
+  return { ...saved, exportFile };
 }
 
 export async function submitProposalForReview(env, accountId, inquiryId, userId, payload = {}) {
   const db = getDb(env);
-  const [inquiry] = await db.select({ id: inquiries.id, title: inquiries.title, status: inquiries.status }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
-  if (!inquiry) return null;
-  const conditions = [eq(documents.inquiryId, inquiryId), eq(documents.documentType, "proposal")];
-  if (payload.documentId) conditions.push(eq(documents.id, payload.documentId));
-  const [entry] = await db.select({ document: documents, version: documentVersions }).from(documents).leftJoin(documentVersions, and(eq(documentVersions.documentId, documents.id), eq(documentVersions.version, documents.currentVersion))).where(and(...conditions)).orderBy(desc(documents.updatedAt)).limit(1);
-  if (!entry) return null;
-  const metadata = safeJson(entry.version?.metadataJson) || {};
-  await db.update(documents).set({ status: "review", updatedAt: now() }).where(eq(documents.id, entry.document.id));
-  await db.update(inquiries).set({ status: "review", updatedAt: now() }).where(eq(inquiries.id, inquiryId));
-  let [proposal] = await db.select().from(proposals).where(eq(proposals.documentId, entry.document.id)).orderBy(desc(proposals.createdAt)).limit(1);
-  if (proposal) {
-    await db.update(proposals).set({ status: "review", requiresApproval: true, updatedAt: now() }).where(eq(proposals.id, proposal.id));
-    [proposal] = await db.select().from(proposals).where(eq(proposals.id, proposal.id)).limit(1);
-  } else {
-    const proposalId = id("prop");
-    await db.insert(proposals).values({ id: proposalId, inquiryId, documentId: entry.document.id, status: "review", priceLowCents: metadata.estimate?.lowCents || null, priceHighCents: metadata.estimate?.highCents || null, requiresApproval: true });
-    [proposal] = await db.select().from(proposals).where(eq(proposals.id, proposalId)).limit(1);
-  }
-  await createActivity(env, accountId, inquiryId, userId, "proposal.submitted_for_review", `Submitted proposal for ${inquiry.title} to internal review`, { documentId: entry.document.id, versionId: entry.version?.id, proposalId: proposal.id });
-  await createAuditLog(env, accountId, userId, "proposal", proposal.id, "proposal.submitted_for_review", { inquiryStatus: inquiry.status, documentStatus: entry.document.status }, { inquiryStatus: "review", documentStatus: "review", proposalStatus: proposal.status });
-  return { document: { documentId: entry.document.id, versionId: entry.version?.id, documentType: "proposal", title: entry.document.title, subject: entry.version?.subject || null, body: entry.version?.body || "", metadata, currentVersion: entry.document.currentVersion, status: "review" }, proposal: snake(proposal), inquiry: { ...inquiry, status: "review" } };
+  return db.transaction(async (tx) => {
+    const [inquiry] = await tx.select({ id: inquiries.id, title: inquiries.title, status: inquiries.status }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
+    if (!inquiry) return null;
+    const conditions = [eq(documents.inquiryId, inquiryId), eq(documents.documentType, "proposal")];
+    if (payload.documentId) conditions.push(eq(documents.id, payload.documentId));
+    const [entry] = await tx.select({ document: documents, version: documentVersions }).from(documents).leftJoin(documentVersions, and(eq(documentVersions.documentId, documents.id), eq(documentVersions.version, documents.currentVersion))).where(and(...conditions)).orderBy(desc(documents.updatedAt)).limit(1);
+    if (!entry) return null;
+    const metadata = safeJson(entry.version?.metadataJson) || {};
+    await tx.update(documents).set({ status: "review", updatedAt: now() }).where(eq(documents.id, entry.document.id));
+    await tx.update(inquiries).set({ status: "review", updatedAt: now() }).where(eq(inquiries.id, inquiryId));
+    let [proposal] = await tx.select().from(proposals).where(eq(proposals.documentId, entry.document.id)).orderBy(desc(proposals.createdAt)).limit(1);
+    if (proposal) {
+      await tx.update(proposals).set({ status: "review", requiresApproval: true, updatedAt: now() }).where(eq(proposals.id, proposal.id));
+      [proposal] = await tx.select().from(proposals).where(eq(proposals.id, proposal.id)).limit(1);
+    } else {
+      const proposalId = id("prop");
+      await tx.insert(proposals).values({ id: proposalId, inquiryId, documentId: entry.document.id, status: "review", priceLowCents: metadata.estimate?.lowCents || null, priceHighCents: metadata.estimate?.highCents || null, requiresApproval: true });
+      [proposal] = await tx.select().from(proposals).where(eq(proposals.id, proposalId)).limit(1);
+    }
+    await createActivity(env, accountId, inquiryId, userId, "proposal.submitted_for_review", `Submitted proposal for ${inquiry.title} to internal review`, { documentId: entry.document.id, versionId: entry.version?.id, proposalId: proposal.id }, tx);
+    await createAuditLog(env, accountId, userId, "proposal", proposal.id, "proposal.submitted_for_review", { inquiryStatus: inquiry.status, documentStatus: entry.document.status }, { inquiryStatus: "review", documentStatus: "review", proposalStatus: proposal.status }, tx);
+    return { document: { documentId: entry.document.id, versionId: entry.version?.id, documentType: "proposal", title: entry.document.title, subject: entry.version?.subject || null, body: entry.version?.body || "", metadata, currentVersion: entry.document.currentVersion, status: "review" }, proposal: snake(proposal), inquiry: { ...inquiry, status: "review" } };
+  });
 }
 
 export async function saveEstimateForInquiry(env, accountId, inquiryId, userId, payload = {}) {
   const db = getDb(env);
-  const [inquiry] = await db.select({ id: inquiries.id, title: inquiries.title, status: inquiries.status }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
-  if (!inquiry) return null;
-  const [{ version: latestVersion }] = await db.select({ version: max(estimates.version) }).from(estimates).where(eq(estimates.inquiryId, inquiryId));
-  const version = Number(latestVersion || 0) + 1;
-  const estimateId = id("est");
-  const lowCents = Math.round(Number(payload.lowCents)), highCents = Math.round(Number(payload.highCents));
-  const assumptions = String(payload.assumptions || "Estimate saved from mobile estimate workflow.").slice(0, 2000);
-  await db.insert(estimates).values({ id: estimateId, inquiryId, version, status: "approved", lowCents, highCents, assumptions, createdByUserId: userId, approvedAt: now() });
-  const lines = normalizeEstimateLines(payload.lineItems, lowCents);
-  if (lines.length) await db.insert(estimateLines).values(lines.map((line) => ({ id: id("line"), estimateId, lineType: line.lineType, description: line.description, quantity: line.quantity, unit: line.unit, unitCostCents: line.unitCostCents, totalCents: Math.round(line.quantity * line.unitCostCents) })));
-  await db.update(inquiries).set({ estimatedLowCents: lowCents, estimatedHighCents: highCents, status: "estimating", updatedAt: now() }).where(eq(inquiries.id, inquiryId));
-  const [estimate] = await db.select().from(estimates).where(eq(estimates.id, estimateId)).limit(1);
-  await createActivity(env, accountId, inquiryId, userId, "estimate.saved", `Saved estimate for ${inquiry.title}`, { estimateId, version, lowCents, highCents });
-  await createAuditLog(env, accountId, userId, "estimate", estimateId, "estimate.saved", null, snake(estimate));
-  return { estimate: snake(estimate), lineItems: lines, inquiry: { ...inquiry, status: "estimating", estimated_low_cents: lowCents, estimated_high_cents: highCents } };
+  return db.transaction(async (tx) => {
+    const [inquiry] = await tx.select({ id: inquiries.id, title: inquiries.title, status: inquiries.status }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
+    if (!inquiry) return null;
+    const [{ version: latestVersion }] = await tx.select({ version: max(estimates.version) }).from(estimates).where(eq(estimates.inquiryId, inquiryId));
+    const version = Number(latestVersion || 0) + 1;
+    const estimateId = id("est");
+    const lowCents = Math.round(Number(payload.lowCents)), highCents = Math.round(Number(payload.highCents));
+    const assumptions = String(payload.assumptions || "Estimate saved from mobile estimate workflow.").slice(0, 2000);
+    await tx.insert(estimates).values({ id: estimateId, inquiryId, version, status: "approved", lowCents, highCents, assumptions, createdByUserId: userId, approvedAt: now() });
+    const lines = normalizeEstimateLines(payload.lineItems, lowCents);
+    if (lines.length) await tx.insert(estimateLines).values(lines.map((line) => ({ id: id("line"), estimateId, lineType: line.lineType, description: line.description, quantity: line.quantity, unit: line.unit, unitCostCents: line.unitCostCents, totalCents: Math.round(line.quantity * line.unitCostCents) })));
+    await tx.update(inquiries).set({ estimatedLowCents: lowCents, estimatedHighCents: highCents, status: "estimating", updatedAt: now() }).where(eq(inquiries.id, inquiryId));
+    const [estimate] = await tx.select().from(estimates).where(eq(estimates.id, estimateId)).limit(1);
+    await createActivity(env, accountId, inquiryId, userId, "estimate.saved", `Saved estimate for ${inquiry.title}`, { estimateId, version, lowCents, highCents }, tx);
+    await createAuditLog(env, accountId, userId, "estimate", estimateId, "estimate.saved", null, snake(estimate), tx);
+    return { estimate: snake(estimate), lineItems: lines, inquiry: { ...inquiry, status: "estimating", estimated_low_cents: lowCents, estimated_high_cents: highCents } };
+  });
 }
 
 export async function listCommunications(env, accountId, inquiryId) {
@@ -496,22 +569,26 @@ export async function listSiteVisits(env, accountId, inquiryId) {
 
 export async function scheduleSiteVisit(env, accountId, inquiryId, userId, payload = {}) {
   const db = getDb(env);
-  const [inquiry] = await db.select({ id: inquiries.id, title: inquiries.title, siteId: inquiries.siteId }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
-  if (!inquiry) return null;
-  const [existing] = await db.select().from(siteVisits).where(and(eq(siteVisits.inquiryId, inquiryId), inArray(siteVisits.status, ["needed", "scheduled"]))).orderBy(desc(siteVisits.createdAt)).limit(1);
-  const scheduledStart = payload.scheduledStart || defaultSiteVisitStart();
-  const scheduledEnd = payload.scheduledEnd || addHours(scheduledStart, 1);
-  const notes = payload.notes || "Site visit scheduled from mobile workflow.";
-  const visitId = existing?.id || id("visit");
-  if (existing) await db.update(siteVisits).set({ scheduledStart, scheduledEnd, status: "scheduled", assignedUserId: userId, notes, updatedAt: now() }).where(eq(siteVisits.id, visitId));
-  else await db.insert(siteVisits).values({ id: visitId, inquiryId, siteId: inquiry.siteId || null, scheduledStart, scheduledEnd, status: "scheduled", assignedUserId: userId, notes, createdAt: now(), updatedAt: now() });
-  await ensureChecklistItems(env, visitId, payload.checklist || defaultChecklistLabels());
-  await db.update(inquiries).set({ status: "site_visit", updatedAt: now() }).where(eq(inquiries.id, inquiryId));
-  const calendarSync = await queueCalendarHold(env, accountId, inquiryId, userId, { visitId, title: `Site visit: ${inquiry.title}`, scheduledStart, scheduledEnd });
-  const [siteVisit] = await db.select().from(siteVisits).where(eq(siteVisits.id, visitId)).limit(1);
-  await createActivity(env, accountId, inquiryId, userId, "site_visit.scheduled", `Scheduled site visit for ${inquiry.title}`, { visitId, scheduledStart, scheduledEnd, calendarSyncId: calendarSync.id });
-  await createAuditLog(env, accountId, userId, "site_visit", visitId, existing ? "site_visit.rescheduled" : "site_visit.scheduled", existing ? snake(existing) : null, snake(siteVisit));
-  return { siteVisit: { ...snake(siteVisit), checklistItems: (await listSiteVisits(env, accountId, inquiryId)).find((visit) => visit.id === visitId)?.checklistItems || [] }, calendarSync };
+  const scheduled = await db.transaction(async (tx) => {
+    const [inquiry] = await tx.select({ id: inquiries.id, title: inquiries.title, siteId: inquiries.siteId }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
+    if (!inquiry) return null;
+    const [existing] = await tx.select().from(siteVisits).where(and(eq(siteVisits.inquiryId, inquiryId), inArray(siteVisits.status, ["needed", "scheduled"]))).orderBy(desc(siteVisits.createdAt)).limit(1);
+    const scheduledStart = payload.scheduledStart || defaultSiteVisitStart();
+    const scheduledEnd = payload.scheduledEnd || addHours(scheduledStart, 1);
+    const notes = payload.notes || "Site visit scheduled from mobile workflow.";
+    const visitId = existing?.id || id("visit");
+    if (existing) await tx.update(siteVisits).set({ scheduledStart, scheduledEnd, status: "scheduled", assignedUserId: userId, notes, updatedAt: now() }).where(eq(siteVisits.id, visitId));
+    else await tx.insert(siteVisits).values({ id: visitId, inquiryId, siteId: inquiry.siteId || null, scheduledStart, scheduledEnd, status: "scheduled", assignedUserId: userId, notes, createdAt: now(), updatedAt: now() });
+    await ensureChecklistItems(env, visitId, payload.checklist || defaultChecklistLabels(), tx);
+    await tx.update(inquiries).set({ status: "site_visit", updatedAt: now() }).where(eq(inquiries.id, inquiryId));
+    const calendarSync = await queueCalendarHold(env, accountId, inquiryId, userId, { visitId, title: `Site visit: ${inquiry.title}`, scheduledStart, scheduledEnd }, tx);
+    const [siteVisit] = await tx.select().from(siteVisits).where(eq(siteVisits.id, visitId)).limit(1);
+    await createActivity(env, accountId, inquiryId, userId, "site_visit.scheduled", `Scheduled site visit for ${inquiry.title}`, { visitId, scheduledStart, scheduledEnd, calendarSyncId: calendarSync.id }, tx);
+    await createAuditLog(env, accountId, userId, "site_visit", visitId, existing ? "site_visit.rescheduled" : "site_visit.scheduled", existing ? snake(existing) : null, snake(siteVisit), tx);
+    return { visitId, siteVisit, calendarSync };
+  });
+  if (!scheduled) return null;
+  return { siteVisit: { ...snake(scheduled.siteVisit), checklistItems: (await listSiteVisits(env, accountId, inquiryId)).find((visit) => visit.id === scheduled.visitId)?.checklistItems || [] }, calendarSync: scheduled.calendarSync };
 }
 
 export async function updateChecklistItem(env, accountId, itemId, userId, status, notes = null) {
@@ -536,6 +613,37 @@ export async function createFileRecord(env, accountId, inquiryId, userId, file) 
   return { id: fileId, ...file };
 }
 
+export async function createDocumentExportFile(env, accountId, inquiryId, userId, document) {
+  if (!env?.FILES?.put) return null;
+  const fileName = `${safeSlug(document.title || document.documentType || "document")}-v${document.currentVersion || 1}.pdf`;
+  const storageKey = `accounts/${accountId}/inquiries/${inquiryId}/document-exports/${document.documentId || id("doc")}-${document.versionId || "latest"}.pdf`;
+  const bytes = createPdfBytes({
+    title: document.title || titleForDocument(document.documentType),
+    subject: document.subject || null,
+    body: document.body || "",
+    documentType: document.documentType || "document",
+    version: document.currentVersion || 1
+  });
+  await env.FILES.put(storageKey, bytes, {
+    httpMetadata: { contentType: "application/pdf" },
+    customMetadata: {
+      accountId,
+      inquiryId,
+      documentId: document.documentId || "",
+      versionId: document.versionId || "",
+      documentType: document.documentType || "document",
+      generatedFrom: "document_version"
+    }
+  });
+  return createFileRecord(env, accountId, inquiryId, userId, {
+    fileName,
+    contentType: "application/pdf",
+    storageKey,
+    sizeBytes: bytes.byteLength,
+    category: "document_export"
+  });
+}
+
 export async function listFilesForInquiry(env, accountId, inquiryId) {
   const rows = await getDb(env).select({ file: files }).from(files).innerJoin(inquiries, eq(inquiries.id, files.inquiryId)).where(and(eq(inquiries.accountId, accountId), eq(files.inquiryId, inquiryId))).orderBy(desc(files.uploadedAt));
   return rows.map(({ file }) => snake(file));
@@ -546,8 +654,7 @@ export async function getFileForDownload(env, accountId, fileId) {
   return row ? snake(row.file) : null;
 }
 
-async function findOrCreateCompany(env, accountId, company) {
-  const db = getDb(env);
+async function findOrCreateCompany(env, accountId, company, db = getDb(env)) {
   const [existing] = await db.select({ id: companies.id }).from(companies).where(and(eq(companies.accountId, accountId), eq(companies.name, company.name))).limit(1);
   if (existing) return existing.id;
   const companyId = id("co");
@@ -555,11 +662,11 @@ async function findOrCreateCompany(env, accountId, company) {
   return companyId;
 }
 
-async function persistExtractedFields(env, inquiryId, sourceId, extraction) {
+async function persistExtractedFields(env, inquiryId, sourceId, extraction, db = getDb(env)) {
   const values = [
-    ["company_name", "Company", extraction.company.name], ["contact_name", "Contact", extraction.contact.fullName], ["contact_email", "Email", extraction.contact.email], ["contact_phone", "Phone", extraction.contact.phone], ["site_city", "City", extraction.site.city], ["site_region", "Region", extraction.site.region], ["service_type", "Service", extraction.service.label], ["lease_end_date", "Lease expiration date", extraction.timeline.leaseEndDate], ["requested_due_date", "Requested due date", extraction.timeline.requestedDueDate], ["access_requirements", "Site access requirements", extraction.site.accessNotes], ["rack_count", "Rack count", extraction.equipment.rackCount == null ? null : String(extraction.equipment.rackCount)], ["equipment_assets", "Equipment", extraction.equipment.assets.join(", ") || null], ["estimate_range", "Estimate range", centsRange(extraction.estimateRange.lowCents, extraction.estimateRange.highCents)]
+    ["company_name", "Company", extraction.company.name], ["contact_name", "Contact", extraction.contact.fullName], ["contact_email", "Email", extraction.contact.email], ["contact_phone", "Phone", extraction.contact.phone], ["site_address", "Site address", extraction.site.fullAddress], ["site_city", "City", extraction.site.city], ["site_region", "Region", extraction.site.region], ["service_type", "Service", extraction.service.label], ["lease_end_date", "Lease expiration date", extraction.timeline.leaseEndDate], ["requested_due_date", "Requested due date", extraction.timeline.requestedDueDate], ["access_requirements", "Site access requirements", extraction.site.accessNotes], ["rack_count", "Rack count", extraction.equipment.rackCount == null ? null : String(extraction.equipment.rackCount)], ["equipment_assets", "Equipment", extraction.equipment.assets.join(", ") || null], ["estimate_range", "Estimate range", centsRange(extraction.estimateRange.lowCents, extraction.estimateRange.highCents)]
   ].filter(([, , value]) => value !== null && value !== undefined && value !== "");
-  if (values.length) await getDb(env).insert(extractedFields).values(values.map(([fieldKey, label, valueText]) => ({ id: id("field"), inquiryId, fieldKey, label, valueText, confidenceScore: extraction.confidenceScore, sourceId }))).onConflictDoNothing();
+  if (values.length) await db.insert(extractedFields).values(values.map(([fieldKey, label, valueText]) => ({ id: id("field"), inquiryId, fieldKey, label, valueText, confidenceScore: extraction.confidenceScore, sourceId }))).onConflictDoNothing();
 }
 
 async function upsertExtractedField(env, inquiryId, fieldKey, label, valueText, confidenceScore = 100) {
@@ -575,12 +682,11 @@ async function upsertExtractedField(env, inquiryId, fieldKey, label, valueText, 
   return fieldId;
 }
 
-async function persistMissingRequirements(env, inquiryId, requirements) {
-  if (requirements.length) await getDb(env).insert(missingRequirements).values(requirements.map((item) => ({ id: id("miss"), inquiryId, requirementKey: item.key, label: item.label, category: item.category, severity: item.severity, status: "open", notes: item.reason }))).onConflictDoNothing();
+async function persistMissingRequirements(env, inquiryId, requirements, db = getDb(env)) {
+  if (requirements.length) await db.insert(missingRequirements).values(requirements.map((item) => ({ id: id("miss"), inquiryId, requirementKey: item.key, label: item.label, category: item.category, severity: item.severity, status: "open", notes: item.reason }))).onConflictDoNothing();
 }
 
-async function createEstimateRecords(env, inquiryId, userId, product) {
-  const db = getDb(env);
+async function createEstimateRecords(env, inquiryId, userId, product, db = getDb(env)) {
   const [{ version: latestVersion }] = await db.select({ version: max(estimates.version) }).from(estimates).where(eq(estimates.inquiryId, inquiryId));
   const estimateId = id("est");
   await db.insert(estimates).values({ id: estimateId, inquiryId, version: Number(latestVersion || 0) + 1, status: product.approvalRequired ? "draft" : "approved", lowCents: product.estimate.lowCents, highCents: product.estimate.highCents, assumptions: product.estimate.assumptions, createdByUserId: userId });
@@ -588,34 +694,36 @@ async function createEstimateRecords(env, inquiryId, userId, product) {
   return estimateId;
 }
 
-async function createProposalRecords(env, inquiryId, estimateId, documentId, product) {
-  const db = getDb(env);
+async function createProposalRecords(env, inquiryId, estimateId, documentId, product, db = getDb(env)) {
   const proposalId = id("prop");
   await db.insert(proposals).values({ id: proposalId, inquiryId, estimateId, documentId, status: product.approvalRequired ? "review" : "draft", priceLowCents: product.estimate.lowCents, priceHighCents: product.estimate.highCents, requiresApproval: product.approvalRequired });
   if (product.sections.length) await db.insert(proposalSections).values(product.sections.map((section, index) => ({ id: id("section"), proposalId, sectionKey: section.key, title: section.title, body: section.body, displayOrder: index + 1 })));
   return proposalId;
 }
 
-async function createSiteVisitRecords(env, inquiryId, userId, product) {
-  const db = getDb(env);
+async function createSiteVisitRecords(env, inquiryId, userId, product, db = getDb(env)) {
   let [visit] = await db.select({ id: siteVisits.id }).from(siteVisits).where(and(eq(siteVisits.inquiryId, inquiryId), inArray(siteVisits.status, ["needed", "scheduled"]))).limit(1);
   const visitId = visit?.id || id("visit");
   if (!visit) await db.insert(siteVisits).values({ id: visitId, inquiryId, status: "needed", assignedUserId: userId, notes: "Generated from AI site checklist workflow." });
   const labels = product.body.split("\n").map((line) => line.replace(/^[-*\d.\s]+/, "").trim()).filter(Boolean).slice(0, 12);
-  await ensureChecklistItems(env, visitId, labels);
+  await ensureChecklistItems(env, visitId, labels, db);
 }
 
-async function ensureChecklistItems(env, visitId, labels) {
-  const db = getDb(env);
+async function ensureChecklistItems(env, visitId, labels, db = getDb(env)) {
   const existing = await db.select({ itemKey: checklistItems.itemKey }).from(checklistItems).where(eq(checklistItems.siteVisitId, visitId));
   const keys = new Set(existing.map((item) => item.itemKey));
   const values = labels.map((label) => ({ key: label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 42) || id("item"), label })).filter((item) => !keys.has(item.key)).map((item) => ({ id: id("check"), siteVisitId: visitId, itemKey: item.key, label: item.label, status: "open" }));
   if (values.length) await db.insert(checklistItems).values(values).onConflictDoNothing();
 }
 
-async function queueCalendarHold(env, accountId, inquiryId, userId, payload) {
-  const db = getDb(env);
-  const integration = await createDefaultIntegration(env, accountId, userId, "calendar");
+async function queueCalendarHold(env, accountId, inquiryId, userId, payload, db = getDb(env)) {
+  const [integration] = await db.select({ id: integrationConnections.id }).from(integrationConnections).where(and(
+    eq(integrationConnections.accountId, accountId),
+    eq(integrationConnections.provider, "calendar"),
+    eq(integrationConnections.displayName, "Google Calendar"),
+    eq(integrationConnections.status, "connected")
+  )).limit(1);
+  if (!integration) return { id: null, provider: "calendar", externalId: null, status: "not_connected" };
   const syncId = id("sync"), externalId = `calendar_hold_${payload.visitId}`;
   await db.insert(syncEvents).values({ id: syncId, integrationId: integration.id, inquiryId, status: "queued", operation: "calendar_hold", externalId });
   return { id: syncId, provider: "calendar", externalId, status: "queued" };
@@ -641,12 +749,72 @@ function normalizeDocumentType(type) { return ["follow_up_email", "proposal", "s
 function titleForDocument(type) { return ({ follow_up_email: "Follow-up Email", proposal: "Proposal Draft", scope_of_work: "Scope of Work", site_checklist: "Site Visit Checklist", estimate: "Estimate", closeout: "Closeout", other: "Document" })[type] || "Document"; }
 function runTypeForDocument(type) { return type === "scope_of_work" ? "scope" : ["follow_up_email", "proposal", "site_checklist", "estimate"].includes(type) ? type : "scope"; }
 function integrationDisplayName(provider) { return ({ crm: "CRM", email: "Email", calendar: "Calendar", storage: "Storage" })[provider] || "Other"; }
+function integrationWebhook(env, provider) {
+  if (provider === "crm") return env.CRM_PROVIDER_WEBHOOK || "";
+  if (provider === "storage") return env.STORAGE_PROVIDER_WEBHOOK || "";
+  if (provider === "email") return env.EMAIL_PROVIDER_WEBHOOK || env.COMMUNICATION_PROVIDER_WEBHOOK || "";
+  return env.INTEGRATION_PROVIDER_WEBHOOK || "";
+}
 function communicationChannel(channel) { const value = String(channel || "internal_note").toLowerCase(); return ["email", "phone", "text", "internal_note"].includes(value) ? value : "internal_note"; }
 function channelLabel(channel) { return ({ email: "email", phone: "call note", text: "text message", internal_note: "internal note" })[channel] || "communication"; }
 function communicationWebhook(env, channel) { return channel === "email" ? env.EMAIL_PROVIDER_WEBHOOK || env.COMMUNICATION_PROVIDER_WEBHOOK || "" : channel === "text" ? env.SMS_PROVIDER_WEBHOOK || env.COMMUNICATION_PROVIDER_WEBHOOK || "" : ""; }
 function defaultSiteVisitStart() { const date = new Date(); date.setUTCDate(date.getUTCDate() + 2); date.setUTCHours(14, 0, 0, 0); return date.toISOString(); }
 function addHours(value, hours) { const date = new Date(value); date.setUTCHours(date.getUTCHours() + hours); return date.toISOString(); }
 function defaultChecklistLabels() { return ["Confirm site access window", "Capture room and equipment photos", "Validate rack and equipment inventory", "Confirm electrical disconnect and utility shutoff", "Document escort, security, and loading dock requirements"]; }
+function safeSlug(value) { return String(value || "document").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "document"; }
+function createPdfBytes(document) {
+  const lines = [
+    document.title || "Document",
+    document.subject ? `Subject: ${document.subject}` : null,
+    `${String(document.documentType || "document").replaceAll("_", " ")} / Version ${document.version || 1}`,
+    "",
+    ...wrapPdfText(document.body || "No document body.")
+  ].filter((line) => line !== null).slice(0, 95);
+  const content = [
+    "BT",
+    "/F1 18 Tf",
+    "72 750 Td",
+    `(${escapePdfText(lines[0])}) Tj`,
+    "/F1 10 Tf",
+    ...lines.slice(1).flatMap((line) => ["0 -16 Td", `(${escapePdfText(line)}) Tj`]),
+    "ET"
+  ].join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets.slice(1)) pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+function wrapPdfText(value) {
+  const words = String(value).replace(/\r/g, "").split(/\s+/);
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    if (!word) continue;
+    if (`${line} ${word}`.trim().length > 88) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = `${line} ${word}`.trim();
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+function escapePdfText(value) { return String(value).replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)"); }
 function normalizeEstimateLines(lines, lowCents) { const fallback = [{ lineType: "labor", description: "Labor", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * .42) }, { lineType: "logistics", description: "Logistics", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * .18) }, { lineType: "recycling", description: "Recycling", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * .16) }, { lineType: "contingency", description: "Contingency", quantity: 1, unit: "each", unitCostCents: Math.round(lowCents * .1) }]; return (Array.isArray(lines) && lines.length ? lines : fallback).slice(0, 24).map((line) => ({ lineType: estimateLineType(line.lineType), description: String(line.description || "Estimate line item").slice(0, 240), quantity: Number(line.quantity || 1), unit: String(line.unit || "each").slice(0, 40), unitCostCents: Math.round(Number(line.unitCostCents || 0)) })).filter((line) => Number.isFinite(line.quantity) && Number.isFinite(line.unitCostCents) && line.unitCostCents >= 0); }
 function estimateLineType(type) { const value = String(type || "other").toLowerCase(); return ["labor", "logistics", "recycling", "equipment", "subcontractor", "contingency", "other"].includes(value) ? value : "other"; }
 function safeJson(value) { if (!value) return null; try { return typeof value === "string" ? JSON.parse(value) : value; } catch { return null; } }

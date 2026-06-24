@@ -1,11 +1,11 @@
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, CalendarCheck2, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, FileCheck2, Mail, MapPin } from "lucide-react";
+import { Building2, CalendarCheck2, CalendarDays, Check, ChevronLeft, ChevronRight, Clock3, ExternalLink, FileCheck2, Mail, MapPin, RefreshCw } from "lucide-react";
 import { client } from "../lib/api";
 import { Button, EmptyState, Notice } from "../components/ui";
 import { cn } from "../lib/utils";
 
-const eventIcons = { follow_up: Mail, proposal: FileCheck2, site_visit: Building2 };
+const eventIcons = { follow_up: Mail, proposal: FileCheck2, site_visit: Building2, google_calendar: CalendarDays };
 const actionIcons = { follow_up: Mail, proposal: FileCheck2, site_visit: CalendarCheck2 };
 
 export function TodayScreen({ openWorkflow }) {
@@ -14,6 +14,7 @@ export function TodayScreen({ openWorkflow }) {
   const today = React.useMemo(() => localDateKey(new Date()), []);
   const [selectedDate, setSelectedDate] = React.useState(today);
   const [notice, setNotice] = React.useState("");
+  const [calendarNotice, setCalendarNotice] = React.useState(null);
   const [showAllActions, setShowAllActions] = React.useState(false);
   const agenda = useQuery({ queryKey: ["today", selectedDate, timezone], queryFn: () => client.today(selectedDate, timezone) });
   const confirmVisit = useMutation({
@@ -27,10 +28,25 @@ export function TodayScreen({ openWorkflow }) {
       ]);
     }
   });
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("calendar");
+    if (!result) return;
+    setCalendarNotice(result === "connected"
+      ? { tone: "success", message: "Google Calendar connected. Your schedule is now synchronized." }
+      : {
+          tone: "error",
+          message: params.get("reason") || "Google Calendar could not be connected.",
+          actionLabel: params.get("actionLabel"),
+          actionUrl: params.get("actionUrl")
+        });
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
 
   const week = React.useMemo(() => weekDates(selectedDate), [selectedDate]);
   const events = agenda.data?.events || [];
   const actions = agenda.data?.actions || [];
+  const calendar = agenda.data?.calendar;
   const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
   const scheduleItems = selectedDate === today && events.length ? [...events, { id: "current-time", kind: "current_time", startMinutes: currentMinutes }].sort((a, b) => a.startMinutes - b.startMinutes) : events;
 
@@ -62,9 +78,17 @@ export function TodayScreen({ openWorkflow }) {
     </div>
 
     <section className="mt-4" aria-labelledby="schedule-title">
-      <div className="mb-2 flex items-center justify-between"><h3 id="schedule-title" className="flex items-center gap-2 text-lg font-bold"><CalendarDays size={20} className="text-blue-600" />Schedule</h3><span className="text-xs text-slate-500">{events.length} {events.length === 1 ? "event" : "events"}</span></div>
+      <div className="mb-2 flex items-center justify-between"><h3 id="schedule-title" className="flex items-center gap-2 text-lg font-bold"><CalendarDays size={20} className="text-blue-600" />Schedule</h3><div className="flex items-center gap-2"><CalendarStatus calendar={calendar} busy={agenda.isFetching} connect={() => window.location.assign("/api/integrations/google-calendar/connect")} refresh={() => agenda.refetch()} /><span className="text-xs text-slate-500">{events.length} {events.length === 1 ? "event" : "events"}</span></div></div>
+      {calendarNotice && (calendarNotice.actionUrl ? <div className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
+        <p>{calendarNotice.message}</p>
+        <a className="mt-2 inline-flex min-h-8 items-center gap-1 font-semibold underline underline-offset-2" href={calendarNotice.actionUrl} target="_blank" rel="noreferrer">{calendarNotice.actionLabel || "Open Google Calendar setup"}<ExternalLink size={14} /></a>
+      </div> : <div className="mb-3"><Notice tone={calendarNotice.tone}>{calendarNotice.message}</Notice></div>)}
+      {calendar?.state === "error" && <div className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700" role="alert">
+        <p>{calendar.error}</p>
+        {calendar.actionUrl && <a className="mt-2 inline-flex min-h-8 items-center gap-1 font-semibold underline underline-offset-2" href={calendar.actionUrl} target="_blank" rel="noreferrer">{calendar.actionLabel || "Open Google Calendar setup"}<ExternalLink size={14} /></a>}
+      </div>}
       {agenda.isLoading ? <ScheduleLoading /> : agenda.error ? <Notice tone="error">Could not load this schedule.</Notice> : events.length ? <div className="relative divide-y divide-slate-100 border-y border-slate-200 before:absolute before:bottom-5 before:left-[70px] before:top-5 before:w-px before:bg-slate-200">
-        {scheduleItems.map((event) => event.kind === "current_time" ? <CurrentTime key={event.id} minutes={event.startMinutes} /> : <ScheduleEvent key={event.id} event={event} open={() => openWorkflow(event.inquiryId, event.screen)} />)}
+        {scheduleItems.map((event) => event.kind === "current_time" ? <CurrentTime key={event.id} minutes={event.startMinutes} /> : <ScheduleEvent key={event.id} event={event} open={() => event.source === "google" ? event.htmlLink && window.open(event.htmlLink, "_blank", "noopener,noreferrer") : openWorkflow(event.inquiryId, event.screen)} />)}
       </div> : <EmptyState>No scheduled work for {shortDate(selectedDate)}.</EmptyState>}
     </section>
 
@@ -80,11 +104,18 @@ export function TodayScreen({ openWorkflow }) {
 
 function ScheduleEvent({ event, open }) {
   const Icon = eventIcons[event.kind] || Clock3;
-  return <button type="button" onClick={open} className="relative grid min-h-24 w-full grid-cols-[52px_36px_minmax(0,1fr)_20px] items-center gap-2 py-3 text-left hover:bg-slate-50">
-    <time className="self-start pt-2 text-xs font-semibold text-blue-700">{timeLabel(event.startMinutes)}</time>
-    <span className={cn("z-10 grid size-9 place-items-center rounded-full text-white", event.kind === "proposal" ? "bg-amber-500" : "bg-blue-600")}><Icon size={18} /></span>
-    <span className="min-w-0"><strong className="block text-sm">{event.title}</strong><span className="mt-0.5 block truncate text-sm text-slate-700">{event.company}</span><span className="mt-1 flex items-center gap-1 text-xs text-slate-500">{event.kind === "site_visit" && <MapPin size={12} />} {event.detail}</span><span className="mt-1 block text-[11px] text-slate-400">{timeLabel(event.startMinutes)}-{timeLabel(event.endMinutes)}</span></span>
-    <ChevronRight size={18} className="text-slate-400" />
+  return <button type="button" onClick={open} disabled={event.source === "google" && !event.htmlLink} className="relative grid min-h-24 w-full grid-cols-[52px_36px_minmax(0,1fr)_20px] items-center gap-2 py-3 text-left hover:bg-slate-50 disabled:cursor-default">
+    <time className="self-start pt-2 text-xs font-semibold text-blue-700">{event.allDay ? "All day" : timeLabel(event.startMinutes)}</time>
+    <span className={cn("z-10 grid size-9 place-items-center rounded-full text-white", event.kind === "proposal" ? "bg-amber-500" : event.source === "google" ? "bg-emerald-600" : "bg-blue-600")}><Icon size={18} /></span>
+    <span className="min-w-0"><strong className="block text-sm">{event.title}</strong><span className="mt-0.5 block truncate text-sm text-slate-700">{event.company}</span><span className="mt-1 flex items-center gap-1 text-xs text-slate-500">{event.kind === "site_visit" && <MapPin size={12} />} {event.detail}</span><span className="mt-1 block text-[11px] text-slate-400">{event.allDay ? "All-day event" : `${timeLabel(event.startMinutes)}-${timeLabel(event.endMinutes)}`}</span></span>
+    {event.source === "google" ? <ExternalLink size={16} className="text-slate-400" /> : <ChevronRight size={18} className="text-slate-400" />}
+  </button>;
+}
+
+function CalendarStatus({ calendar, busy, connect, refresh }) {
+  if (!calendar || calendar.state === "setup_required" || calendar.state === "not_connected") return <Button variant="ghost" size="xs" onClick={connect}><CalendarDays size={14} />Connect calendar</Button>;
+  return <button type="button" onClick={refresh} className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50" aria-label="Refresh Google Calendar">
+    <RefreshCw size={13} className={busy ? "animate-spin" : ""} />{calendar.state === "error" ? "Retry sync" : "Google synced"}
   </button>;
 }
 

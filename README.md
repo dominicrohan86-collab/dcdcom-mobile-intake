@@ -21,6 +21,7 @@ npm run dev          # Vite UI and local Worker API at http://127.0.0.1:4173
 npm run db:generate  # Generate a migration after changing db/drizzle-schema.js
 npm run db:check     # Validate Drizzle migrations
 npm run test:api     # End-to-end API workflow tests
+npm run test:mobile-ui # Source-level mobile workflow regression checks
 npm run readiness    # D1, R2, identity, account, and AI readiness
 npm run build        # Production client and Worker bundles
 npm run verify       # Architecture, API, readiness, and production build gates
@@ -48,9 +49,25 @@ OPENAI_API_KEY=your_key
 OPENAI_MODEL=gpt-5.5
 EMAIL_PROVIDER_WEBHOOK=https://your-provider.example/send
 SMS_PROVIDER_WEBHOOK=https://your-provider.example/send
+CRM_PROVIDER_WEBHOOK=https://your-crm-adapter.example/opportunities
+STORAGE_PROVIDER_WEBHOOK=https://your-storage-adapter.example/files
+INTEGRATION_PROVIDER_WEBHOOK=https://your-generic-adapter.example/sync
+GOOGLE_CLIENT_ID=your_google_oauth_client_id
+GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
+GOOGLE_REDIRECT_URI=http://127.0.0.1:4173/api/integrations/google-calendar/callback
+GOOGLE_OAUTH_STATE_SECRET=use_a_long_random_value
+GOOGLE_TOKEN_ENCRYPTION_KEY=use_a_different_long_random_value
+AUTH_SESSION_SECRET=use_a_long_random_value_for_signed_sessions
+DEFAULT_ACCOUNT_ID=acct_dcdcom
 ```
 
-Without an OpenAI key, deterministic extraction and work-product generation remain available. Without communication provider webhooks, outbound messages are safely queued and logged instead of being reported as sent.
+Without an OpenAI key, deterministic extraction and work-product generation remain available. Without communication or integration provider webhooks, outbound messages and syncs are safely queued and logged instead of being reported as sent.
+
+Production API requests should use a signed session token in `Authorization: Bearer <payload.signature>` or the `dcdcom_session` cookie when `AUTH_SESSION_SECRET` is configured. The signed payload carries the user and account id, and all API reads/writes are scoped to that account. Local development can still use trusted identity headers when no session secret is configured.
+
+Generated and manually saved work products create server-side PDF export files in R2 and file metadata in D1. Uploads are byte-sniffed against their declared type, capped at 12 MB, and downloads are served with sandboxing, `nosniff`, and no-store cache headers.
+
+Google Calendar sync uses the read-only Calendar scope. Create a Google OAuth web client, enable the Google Calendar API, and add the exact `GOOGLE_REDIRECT_URI` as an authorized redirect URI. Once configured, users connect from Today or More > Integrations; access tokens refresh automatically.
 
 ## Deployment
 

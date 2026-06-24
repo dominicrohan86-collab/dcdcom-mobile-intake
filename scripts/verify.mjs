@@ -6,6 +6,7 @@ import * as schema from "../db/drizzle-schema.js";
 const serverFiles = [
   "src/server/ai.js", "src/server/api.js", "src/server/app.js", "src/server/auth.js",
   "src/server/bootstrap.js", "src/server/contracts.js", "src/server/db.js", "src/server/index.js",
+  "src/server/observability.js",
   "src/server/repository.js", "db/drizzle-schema.js", "scripts/build.mjs", "scripts/dev-server.mjs",
   "scripts/local-runtime.mjs", "scripts/readiness.mjs", "scripts/test-api.mjs", "vite.config.js", "drizzle.config.js"
 ];
@@ -24,7 +25,7 @@ assert(!/env\.DB|\.prepare\(|\bSELECT\s|\bINSERT\s+INTO\b|\bUPDATE\s+\w+\s+SET\b
 for (const token of ["getDb", "db.select", "db.insert", "db.update", "deleteInquiry", "env.FILES.delete", "sendOutboundCommunication", "scheduleSiteVisit", "submitProposalForReview"]) assert(repository.includes(token), `repository should include ${token}`);
 
 const app = await readFile("src/server/app.js", "utf8");
-for (const token of ["new Hono", "zValidator", "/api/today", "app.delete(\"/api/inquiries/:id\"", "/api/inquiries/:id/generate", "/api/inquiries/:id/send-follow-up", "/api/inquiries/:id/site-visits"]) assert(app.includes(token), `Hono app should include ${token}`);
+for (const token of ["new Hono", "zValidator", "createRequestTelemetry", "inquiryListQuerySchema", "/api/today", "app.delete(\"/api/inquiries/:id\"", "/api/inquiries/:id/generate", "/api/inquiries/:id/send-follow-up", "/api/inquiries/:id/site-visits"]) assert(app.includes(token), `Hono app should include ${token}`);
 
 const client = await readFile("src/client/App.jsx", "utf8");
 for (const token of ["useQuery", "useMutation", "QueryClient", "InquiryDetailScreen", "ProposalScreen", "DocsScreen"]) assert(client.includes(token), `React client should include ${token}`);

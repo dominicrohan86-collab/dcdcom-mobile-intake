@@ -5,6 +5,7 @@ const api = ky.create({ prefix: "/api/", retry: 0, timeout: 30_000 });
 export const client = {
   bootstrap: () => api.get("bootstrap").json(),
   today: (date, timezone) => api.get("today", { searchParams: { date, timezone } }).json(),
+  inquiries: (params = {}) => api.get("inquiries", { searchParams: cleanParams(params) }).json(),
   inquiry: (id) => api.get(`inquiries/${id}`).json(),
   deleteInquiry: (id) => api.delete(`inquiries/${id}`).json(),
   analyze: (json) => api.post("ai/intake-preview", { json }).json(),
@@ -30,3 +31,7 @@ export const client = {
     return api.post(`inquiries/${id}/files`, { body }).json();
   }
 };
+
+function cleanParams(params) {
+  return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+}

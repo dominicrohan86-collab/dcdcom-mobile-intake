@@ -12,6 +12,7 @@ export const intakeSchema = z.object({
   sourceChannel: sourceChannel.default("manual"),
   subject: z.string().max(220).optional(),
   sender: z.string().max(180).optional(),
+  attachmentText: z.string().max(40_000).optional(),
   externalMessageId: z.string().max(240).nullable().optional()
 }).passthrough();
 
@@ -31,6 +32,12 @@ export const estimateSchema = z.object({ lowCents: z.number().positive(), highCe
 export const siteVisitSchema = z.object({ scheduledStart: z.string().nullable().optional(), scheduledEnd: z.string().nullable().optional(), notes: z.string().max(4000).nullable().optional(), checklist: z.array(z.string().max(300)).max(20).optional() });
 export const syncSchema = z.object({ provider: integrationProvider.default("crm") });
 export const activitySchema = z.object({ eventType: z.string().max(100).default("note"), summary: z.string().min(1).max(1000), metadata: z.record(z.string(), z.unknown()).default({}) });
+export const inquiryListQuerySchema = z.object({
+  status: inquiryStatus.optional(),
+  search: z.string().trim().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+  offset: z.coerce.number().int().min(0).default(0)
+});
 export const todayQuerySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   timezone: z.string().min(1).max(80).default("America/New_York")

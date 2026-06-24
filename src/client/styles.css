@@ -2,12 +2,38 @@
 
 @theme {
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --color-brand: #0a57e8;
+  --color-brand: #5c9826;
+
+  /* DCDecom brand green replaces the previous blue interaction scale. */
+  --color-blue-50: #f3f8ef;
+  --color-blue-100: #e5f1dc;
+  --color-blue-200: #cee4bd;
+  --color-blue-300: #b7e6a8;
+  --color-blue-400: #96ce67;
+  --color-blue-500: #7fc242;
+  --color-blue-600: #5c9826;
+  --color-blue-700: #477a1d;
+  --color-blue-800: #385f1c;
+  --color-blue-900: #2e4e1a;
+  --color-blue-950: #172b0c;
+
+  /* Neutral charcoal scale mirrors the industrial look of dcdecom.com. */
+  --color-slate-50: #fafafa;
+  --color-slate-100: #efefef;
+  --color-slate-200: #dededb;
+  --color-slate-300: #c7c7c2;
+  --color-slate-400: #93938d;
+  --color-slate-500: #666a6d;
+  --color-slate-600: #54595f;
+  --color-slate-700: #383b3e;
+  --color-slate-800: #27292b;
+  --color-slate-900: #191919;
+  --color-slate-950: #101010;
 }
 
 * { box-sizing: border-box; }
 html { color-scheme: light; }
-body { margin: 0; min-width: 320px; background: #f1f5f9; color: #0f172a; font-family: var(--font-sans); }
+body { margin: 0; min-width: 320px; background: #efefef; color: #191919; font-family: var(--font-sans); }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 ::-webkit-scrollbar { width: 0; height: 0; }

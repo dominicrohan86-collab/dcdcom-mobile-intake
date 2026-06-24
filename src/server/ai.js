@@ -52,9 +52,10 @@ const INTAKE_SCHEMA = {
     site: {
       type: "object",
       additionalProperties: false,
-      required: ["name", "city", "region", "country", "siteType", "accessNotes"],
+      required: ["name", "fullAddress", "city", "region", "country", "siteType", "accessNotes"],
       properties: {
         name: { type: "string" },
+        fullAddress: { type: ["string", "null"] },
         city: { type: ["string", "null"] },
         region: { type: ["string", "null"] },
         country: { type: "string" },
@@ -138,6 +139,50 @@ const INTAKE_SCHEMA = {
   }
 };
 
+const INTAKE_DEVELOPER_PROMPT = `You are DCDecom's senior intake estimator. Convert customer emails, call notes, text messages, manual notes, and extracted document or photo text into complete, structured inquiry data.
+
+CORE RULES
+1. Extract only information stated or strongly supported by the source.
+2. Never invent customer, site, equipment, timeline, access, budget, or pricing details.
+3. Use null for unknown nullable values.
+4. For required names, use "Unknown Company", "Unknown Contact", or "Customer Site" when unavailable.
+5. Return dates as YYYY-MM-DD. Do not resolve ambiguous dates without sufficient context.
+6. Monetary values must be integer cents.
+7. A "mentioned" boolean records whether the topic appears in the source, not whether the requirement is satisfied.
+8. Keep scope bullets concise, specific, and operational. Preserve useful details such as square footage, quantities, responsibilities, exclusions, and deliverables in those bullets.
+9. If pricing evidence is insufficient, set both estimate values to null.
+10. Follow the supplied JSON schema exactly and return no commentary outside it.
+
+SERVICE CLASSIFICATION
+Choose exactly one supported service type: data_center_decommissioning, lease_restoration, cable_abatement, hvac_removal, electrical_decommissioning, asset_recovery, or other.
+
+EXTRACTION COVERAGE
+- Company: name, website, and industry.
+- Primary contact: full name, email, phone, and preferred channel.
+- Site: facility name, exact full street address including unit or suite and postal code when stated, city, state or region, country, site type, and all known access restrictions such as hours, escorts, badges, security, loading docks, elevators, or parking. Preserve the stated address rather than shortening it to city and state.
+- Service and scope: requested work, areas included or excluded, approximate size, removal and disconnect responsibilities, hauling, recycling, restoration, resale expectations, deliverables, and completion conditions.
+- Timeline: lease expiration, requested completion date, urgency reason, and hard deadlines.
+- Equipment and materials: rack or cabinet count; servers; storage; network equipment; UPS systems; batteries; generators; CRAC, CRAH, or HVAC units; copper, fiber, and power cabling; busway; raised floor; containment; quantities; dimensions; weights; condition; ownership; and resale expectations.
+- Data and electrical: whether data wiping, shredding, certificates, chain of custody, electrical shutdowns, or disconnect responsibility are mentioned.
+- Commercial: whether a budget or not-to-exceed amount is mentioned, whether the decision maker is identifiable, and whether a quote, estimate, proposal, or bid is requested.
+
+MISSING REQUIREMENTS
+Identify up to 10 unanswered items that materially affect scope, scheduling, safety, access, documentation, or pricing. Consider site location, square footage, equipment quantities, floor plans, equipment lists, site photos, access restrictions, deadlines, data destruction, electrical responsibility, hazardous materials, asset ownership, resale expectations, budget, approval process, and decision maker.
+For every missing requirement provide a stable snake_case key, a clear customer-facing label, the best matching category, an accurate severity, and a concise explanation of why it matters. Use blocking only when work cannot responsibly proceed without the answer.
+
+CLASSIFICATION GUIDANCE
+- Priority urgent: an immediate safety issue or explicit imminent deadline.
+- Priority high: a firm deadline, lease pressure, major dependency, or explicit urgency.
+- Priority medium: an active project with normal timing.
+- Priority low: an exploratory or long-range request.
+- Workload high: a large or complex multi-system, multi-site, or highly constrained project.
+- Workload medium: a normal data center project or several work categories.
+- Workload low: limited, clearly bounded work.
+- Confidence is 0-100 based on completeness and certainty. Reduce it for unknown identity, location, scope, quantities, access, or timeline.
+
+FINAL QUALITY CHECK
+Produce a concise operational summary, a defensible directional estimate or null range, one to five practical next actions, and direct follow-up questions for unresolved requirements. Do not ask for information already present in the source.`;
+
 const WORK_PRODUCT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -194,7 +239,7 @@ const WORK_PRODUCT_SCHEMA = {
   }
 };
 
-export async function analyzeIntake(env, { rawText, sourceChannel = "manual" }) {
+export async function analyzeIntake(env, { rawText, sourceChannel = "manual", subject = "", sender = "", attachmentText = "" }) {
   const normalizedText = String(rawText || "").trim();
   if (normalizedText.length < 12) {
     return {
@@ -221,13 +266,16 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual" }) 
       model,
       schemaName: "dcdcom_intake_extraction",
       schema: INTAKE_SCHEMA,
-      developerText: [
-        "You are the senior intake estimator for DCDecom, a data center decommissioning company.",
-        "Convert raw customer communication into exact operational intake data.",
-        "Prefer null over guessing. Keep missing requirements actionable and specific.",
-        "Estimate ranges are directional only and should be null if the text is too weak."
-      ].join(" "),
-      userText: `Source channel: ${sourceChannel}\n\nCustomer text:\n${normalizedText}`
+      developerText: INTAKE_DEVELOPER_PROMPT,
+      userText: [
+        `Source channel: ${sourceChannel}`,
+        subject ? `Subject: ${subject}` : null,
+        sender ? `Sender: ${sender}` : null,
+        "",
+        "Customer communication:",
+        normalizedText,
+        attachmentText ? `\nExtracted attachment or OCR text:\n${String(attachmentText).trim()}` : null
+      ].filter((value) => value !== null).join("\n")
     });
     return {
       mode: "live",
@@ -302,7 +350,9 @@ export function extractionToPreview(extraction) {
     summary: extraction.summary,
     rows: [
       { icon: "user", label: "Contact", value: extraction.contact.fullName || "Not provided" },
-      { icon: "pin", label: "Location", value: [extraction.site.city, extraction.site.region].filter(Boolean).join(", ") || "Missing" },
+      { icon: "mail", label: "Email", value: extraction.contact.email || "Not provided" },
+      { icon: "phone", label: "Phone", value: extraction.contact.phone || "Not provided" },
+      { icon: "pin", label: "Site address", value: extraction.site.fullAddress || [extraction.site.city, extraction.site.region, extraction.site.country].filter(Boolean).join(", ") || "Not provided" },
       { icon: "briefcase", label: "Service", value: extraction.service.label },
       { icon: "calendar", label: "Timeline", value: extraction.timeline.leaseEndDate ? `Lease end ${extraction.timeline.leaseEndDate}` : "Missing" },
       { icon: "building", label: "Equipment", value: equipmentText(extraction) },
@@ -377,6 +427,7 @@ function normalizeExtraction(extraction, sourceChannel) {
     },
     site: {
       name: stringOr(extraction.site?.name, `${stringOr(extraction.company?.name, "Customer")} Site`),
+      fullAddress: extraction.site?.fullAddress || null,
       city: extraction.site?.city || null,
       region: extraction.site?.region || null,
       country: extraction.site?.country || "US",
@@ -584,7 +635,7 @@ function fallbackExtraction(text, sourceChannel) {
   return normalizeExtraction({
     company: { name: companyName, website: null, industry: /data center|rack|cabinet/i.test(text) ? "Data Centers" : null },
     contact: { fullName: contactName, email: emailFrom(text), phone: phoneFrom(text), preferredChannel: channelToPreference(sourceChannel) },
-    site: { name: companyName === "Unknown Company" ? "Customer Site" : `${companyName} Site`, city: location[0], region: location[1], country: "US", siteType: /data center|rack|cabinet/i.test(text) ? "data_center" : "unknown", accessNotes: accessFrom(text) },
+    site: { name: companyName === "Unknown Company" ? "Customer Site" : `${companyName} Site`, fullAddress: addressFrom(text), city: location[0], region: location[1], country: "US", siteType: /data center|rack|cabinet/i.test(text) ? "data_center" : "unknown", accessNotes: accessFrom(text) },
     service: {
       type: SERVICE_TYPES[serviceLabel] || "other",
       label: serviceLabel,
@@ -652,6 +703,10 @@ function emailFrom(text) {
 
 function phoneFrom(text) {
   return /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/.exec(text)?.[0] || null;
+}
+
+function addressFrom(text) {
+  return /\b\d{1,6}\s+[A-Z0-9][A-Z0-9.' -]{1,80}\s(?:Street|St|Road|Rd|Avenue|Ave|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Parkway|Pkwy|Way|Highway|Hwy)(?:\s*,?\s+(?:Suite|Ste|Unit|Floor|Fl)\s*[A-Z0-9-]+)?\s*,?\s*[A-Z][A-Z.' -]{1,40}\s*,?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/i.exec(text)?.[0]?.trim() || null;
 }
 
 function accessFrom(text) {

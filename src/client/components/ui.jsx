@@ -34,8 +34,8 @@ export function Badge({ children, tone = "neutral", className }) {
     neutral: "bg-slate-100 text-slate-700",
     slate: "border border-slate-200 bg-slate-50 text-slate-700",
     blue: "border border-blue-200 bg-blue-50 text-blue-700",
-    cyan: "border border-cyan-200 bg-cyan-50 text-cyan-800",
-    indigo: "border border-indigo-200 bg-indigo-50 text-indigo-700",
+    cyan: "border border-blue-200 bg-blue-50 text-blue-800",
+    indigo: "border border-slate-300 bg-slate-100 text-slate-700",
     green: "bg-emerald-50 text-emerald-700",
     amber: "bg-amber-50 text-amber-700",
     orange: "bg-orange-50 text-orange-700",
@@ -108,7 +108,12 @@ export function EmptyState({ children }) {
 }
 
 export function Notice({ children, tone = "success" }) {
-  return <p role="status" className={cn("rounded-md p-3 text-sm", tone === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-800")}>{children}</p>;
+  const tones = {
+    error: "bg-red-50 text-red-700",
+    warning: "bg-amber-50 text-amber-800",
+    success: "bg-emerald-50 text-emerald-800"
+  };
+  return <p role="status" className={cn("rounded-md p-3 text-sm", tones[tone] || tones.success)}>{children}</p>;
 }
 
 export function AccordionSection({ value, title, meta, icon, children, defaultOpen = false, className }) {
