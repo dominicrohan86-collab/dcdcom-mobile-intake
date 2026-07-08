@@ -24,7 +24,8 @@ export async function getGoogleCalendarStatus(env, accountId) {
     connected: Boolean(metadata.credentialCipher),
     state: metadata.credentialCipher ? "connected" : "not_connected",
     calendarName: metadata.calendarName || "Google Calendar",
-    lastSyncedAt: metadata.lastSyncedAt || null
+    lastSyncedAt: metadata.lastSyncedAt || null,
+    lastSyncError: metadata.lastSyncError || null
   };
 }
 
@@ -107,8 +108,7 @@ export async function getGoogleCalendarEvents(env, accountId, selectedDate, time
       events: (response.items || []).filter((event) => event.status !== "cancelled").map((event) => normalizeEvent(event, selectedDate, timezone))
     };
   } catch (error) {
-    const rawMessage = error instanceof GoogleCalendarError ? error.message : "Google Calendar could not be reached.";
-    const failure = calendarFailure(env, rawMessage);
+    const failure = calendarFailure(env, error);
     await updateMetadata(env, connection, { lastSyncError: failure.message });
     return { status: { ...status, state: "error", error: failure.message, actionLabel: failure.actionLabel, actionUrl: failure.actionUrl }, events: [] };
   }
@@ -211,7 +211,16 @@ async function findConnection(env, accountId) {
 async function googleRequest(url, init) {
   const response = await fetch(url, init);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new GoogleCalendarError(data.error_description || data.error?.message || "Google Calendar request failed.", response.status);
+  if (!response.ok) {
+    const googleError = data.error || {};
+    const nestedError = Array.isArray(googleError.errors) ? googleError.errors[0] : null;
+    const message = data.error_description || googleError.message || (typeof data.error === "string" ? data.error : null) || "Google Calendar request failed.";
+    throw new GoogleCalendarError(message, response.status, {
+      code: googleError.code || response.status,
+      reason: nestedError?.reason || googleError.status || (typeof data.error === "string" ? data.error : null),
+      googleStatus: googleError.status || null
+    });
+  }
   return data;
 }
 
@@ -219,8 +228,12 @@ function calendarRedirectUri(env, origin) {
   return env.GOOGLE_REDIRECT_URI || `${origin}/api/integrations/google-calendar/callback`;
 }
 
-function calendarFailure(env, message) {
-  if (/has not been used in project|calendar api.*disabled|accessNotConfigured/i.test(message)) {
+function calendarFailure(env, error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const status = error instanceof GoogleCalendarError ? error.status : null;
+  const reason = error instanceof GoogleCalendarError ? String(error.details?.reason || error.details?.googleStatus || "") : "";
+  const diagnostic = `${message} ${reason}`;
+  if (/has not been used in project|calendar api.*disabled|access\s*not\s*configured|accessNotConfigured/i.test(diagnostic)) {
     const projectNumber = String(env.GOOGLE_CLIENT_ID || "").split("-")[0];
     return {
       message: "Google Calendar is connected, but the Calendar API is not enabled for this Google Cloud project.",
@@ -230,8 +243,34 @@ function calendarFailure(env, message) {
         : "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
     };
   }
-  if (/invalid_grant|token has been expired|revoked/i.test(message)) {
-    return { message: "Google Calendar authorization expired. Reconnect the calendar to continue.", actionLabel: null, actionUrl: null };
+  if (/redirect_uri_mismatch/i.test(message)) {
+    return {
+      message: "Google Calendar rejected the redirect URI. Add the exact GOOGLE_REDIRECT_URI to the OAuth client, then reconnect.",
+      actionLabel: "Open OAuth clients",
+      actionUrl: "https://console.cloud.google.com/apis/credentials"
+    };
+  }
+  if (/invalid_client|unauthorized_client/i.test(message)) {
+    return {
+      message: "Google Calendar rejected the OAuth client credentials. Check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, then reconnect.",
+      actionLabel: "Open OAuth clients",
+      actionUrl: "https://console.cloud.google.com/apis/credentials"
+    };
+  }
+  if (/invalid_grant|token has been expired|revoked|needs to be reconnected|credentials could not be read/i.test(message) || status === 401 || /authError|unauthorized/i.test(reason)) {
+    return { message: "Google Calendar authorization expired. Reconnect the calendar to continue.", actionLabel: "Reconnect calendar", actionUrl: "/api/integrations/google-calendar/connect" };
+  }
+  if (/rateLimitExceeded|userRateLimitExceeded|quotaExceeded|quota/i.test(diagnostic)) {
+    return { message: "Google Calendar quota or rate limits are blocking sync right now. Try again after the limit resets.", actionLabel: null, actionUrl: null };
+  }
+  if (/insufficient|forbidden/i.test(message) || /insufficientPermissions|forbidden/i.test(reason)) {
+    return { message: "Google Calendar is connected without the calendar read scope. Reconnect and approve calendar access.", actionLabel: "Reconnect calendar", actionUrl: "/api/integrations/google-calendar/connect" };
+  }
+  if (status === 404 || /notFound/i.test(reason)) {
+    return { message: "The connected Google Calendar could not be found. Reconnect Google Calendar to choose an available calendar.", actionLabel: "Reconnect calendar", actionUrl: "/api/integrations/google-calendar/connect" };
+  }
+  if (/Failed to fetch|fetch failed|network|ENOTFOUND|ECONNRESET|ETIMEDOUT/i.test(message)) {
+    return { message: "Google Calendar could not be reached from this environment. Check network access, then retry sync.", actionLabel: null, actionUrl: null };
   }
   return { message: "Google Calendar could not sync right now. Try again in a moment.", actionLabel: null, actionUrl: null };
 }
@@ -347,9 +386,10 @@ export class CalendarSetupError extends Error {
 }
 
 class GoogleCalendarError extends Error {
-  constructor(message, status = 502) {
+  constructor(message, status = 502, details = {}) {
     super(message);
     this.name = "GoogleCalendarError";
     this.status = status;
+    this.details = details;
   }
 }

@@ -1,7 +1,7 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
-import { AlertTriangle, Building2, Check, ChevronRight, ListFilter, MapPin, Search, X } from "lucide-react";
+import { AlertTriangle, Building2, Check, ChevronRight, ListFilter, MapPin, Search, UserRound, X } from "lucide-react";
 import { client } from "../lib/api";
 import { Badge, Button, EmptyState, Input, Notice } from "../components/ui";
 import { adaptInquiry, cn, priorityTones, stageLabels, stageTones } from "../lib/utils";
@@ -15,7 +15,7 @@ function InquiryCard({ row, open, compact = false }) {
     <span className="grid size-9 place-items-center self-center rounded-full bg-slate-100 text-slate-500"><Building2 size={20} /></span>
     <div className="min-w-0">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0"><h3 className="text-sm font-bold leading-tight text-slate-950">{item.company}</h3><p className="mt-1 text-xs text-slate-700">{item.service}</p>{!compact && <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><MapPin size={12} /> {item.location}</p>}</div>
+        <div className="min-w-0"><h3 className="text-sm font-bold leading-tight text-slate-950">{item.company}</h3><p className="mt-1 text-xs text-slate-700">{item.service}</p>{!compact && <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><MapPin size={12} /> {item.location}</p>}<p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><UserRound size={12} /> {item.owner_name || "Unassigned"}</p></div>
         <Badge tone={stageTones[item.status] || "slate"} className="shrink-0">{stageLabels[item.status] || "New"}</Badge>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
@@ -26,7 +26,7 @@ function InquiryCard({ row, open, compact = false }) {
   </article>;
 }
 
-export function PipelineScreen({ inquiries, open, notice }) {
+export function PipelineScreen({ inquiries, open, notice, savedViews = [] }) {
   const [search, setSearch] = React.useState("");
   const [stage, setStage] = React.useState("all");
   const [filterOpen, setFilterOpen] = React.useState(false);
@@ -41,10 +41,14 @@ export function PipelineScreen({ inquiries, open, notice }) {
   const rows = query.data?.inquiries || inquiries;
   const total = query.data?.total ?? rows.length;
   const counts = React.useMemo(() => countStages(inquiries), [inquiries]);
+  const inquiryViews = savedViews.filter((view) => view.screen === "inquiries");
   return <>
     <div className="flex items-end justify-between gap-3"><div><h2 className="text-3xl font-bold">Inquiries</h2><p className="mt-1 text-sm text-slate-500">{total} {total === 1 ? "result" : "results"}</p></div></div>
     {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
     {query.error && <div className="mt-3"><Notice tone="error">Could not refresh inquiries: {query.error.message}</Notice></div>}
+    {inquiryViews.length > 0 && <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+      {inquiryViews.map((view) => <button key={view.id} type="button" onClick={() => setStage(stageFromSavedView(view))} className={cn("min-h-9 shrink-0 rounded-full border px-3 text-xs font-bold", view.is_default ? "border-brand-300 bg-brand-50 text-brand-800" : "border-slate-200 bg-white text-slate-700")}>{view.name}</button>)}
+    </div>}
     <div className="mt-4 grid grid-cols-[minmax(0,1fr)_44px] gap-2">
       <label className="relative block"><Search className="absolute left-3 top-3 text-slate-400" size={18} /><Input className="pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search inquiries" /></label>
       <PopoverPrimitive.Root open={filterOpen} onOpenChange={setFilterOpen}>
@@ -93,6 +97,11 @@ function countStages(inquiries) {
   const counts = { all: inquiries.length };
   for (const inquiry of inquiries) counts[inquiry.status] = (counts[inquiry.status] || 0) + 1;
   return counts;
+}
+
+function stageFromSavedView(view) {
+  const status = view.filters?.status;
+  return Array.isArray(status) && status.length === 1 && stageFilters.includes(status[0]) ? status[0] : "all";
 }
 
 function LoadingRows() {

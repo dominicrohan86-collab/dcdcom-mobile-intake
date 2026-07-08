@@ -8,10 +8,13 @@
     "db:check": "drizzle-kit check",
     "build": "node scripts/build.mjs",
     "dev": "node --no-warnings scripts/dev-server.mjs",
+    "accessibility:check": "node --no-warnings scripts/accessibility-check.mjs",
+    "performance:budget": "node --no-warnings scripts/performance-budget.mjs",
     "test:api": "node --no-warnings scripts/test-api.mjs",
     "test:mobile-ui": "node --no-warnings scripts/test-mobile-ui.mjs",
     "readiness": "node --no-warnings scripts/readiness.mjs",
-    "verify": "node scripts/verify.mjs && node --no-warnings scripts/test-api.mjs && node --no-warnings scripts/test-mobile-ui.mjs && node --no-warnings scripts/readiness.mjs && npm run build"
+    "release:check": "node --no-warnings scripts/release-check.mjs",
+    "verify": "node scripts/verify.mjs && node --no-warnings scripts/test-api.mjs && node --no-warnings scripts/test-mobile-ui.mjs && node --no-warnings scripts/accessibility-check.mjs && node --no-warnings scripts/readiness.mjs && node --no-warnings scripts/release-check.mjs && npm run build && node --no-warnings scripts/performance-budget.mjs"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.8.0",

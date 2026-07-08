@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "./db.js";
-import { accounts, aiSummaries, communications, companies, contacts, inquiries, inquirySources, missingRequirements, sites, userPreferences, users } from "../../db/drizzle-schema.js";
+import { accounts, aiSummaries, communications, companies, contacts, inquiries, inquirySources, inquiryWatchers, missingRequirements, sites, userPreferences, userSavedViews, users } from "../../db/drizzle-schema.js";
 import { createActivity } from "./repository.js";
 
 export const ACCOUNT_ID = "acct_dcdcom";
@@ -11,6 +11,7 @@ export async function ensureBootstrap(env, user, accountId = ACCOUNT_ID) {
   await db.insert(accounts).values({ id: accountId, name: accountId === ACCOUNT_ID ? "DCDcom" : `DCDcom ${accountId}`, domain: "dcdcom.com" }).onConflictDoNothing();
   await db.insert(users).values({ id: user.id, accountId, email: user.email, fullName: user.fullName, role: user.role || "project_manager" }).onConflictDoNothing();
   await db.insert(userPreferences).values({ userId: user.id }).onConflictDoNothing();
+  await seedSavedViews(db, user.id);
   const [preference] = await db.select({ settingsJson: userPreferences.settingsJson }).from(userPreferences).where(eq(userPreferences.userId, user.id)).limit(1);
   const workspaceSettings = parseSettings(preference?.settingsJson);
   const [existing] = await db.select({ id: inquiries.id }).from(inquiries).where(eq(inquiries.accountId, accountId)).limit(1);
@@ -24,6 +25,7 @@ export async function ensureBootstrap(env, user, accountId = ACCOUNT_ID) {
   await db.insert(contacts).values({ id: seed.contact, accountId, companyId: seed.company, fullName: "Michael Reynolds", email: "mreynolds@nttdata.com", phone: "(571) 555-0134", preferredChannel: "email" });
   await db.insert(sites).values({ id: seed.site, accountId, companyId: seed.company, name: "Ashburn Data Center", city: "Ashburn", region: "VA", siteType: "data_center", accessNotes: "After hours" });
   await db.insert(inquiries).values({ id: seed.inquiry, accountId, companyId: seed.company, contactId: seed.contact, siteId: seed.site, ownerUserId: user.id, title: "NTT Data - Ashburn, VA", serviceType: "data_center_decommissioning", sourceChannel: "phone", priority: "high", workload: "medium", status: "needs_info", estimatedLowCents: 2_850_000, estimatedHighCents: 4_500_000, confidenceScore: 78, leaseEndDate: "2025-07-31", lastCustomerActivityAt: new Date().toISOString() });
+  await db.insert(inquiryWatchers).values({ id: seed.watcher, inquiryId: seed.inquiry, userId: user.id }).onConflictDoNothing();
   const sourceText = "Customer requested data center decommissioning in Ashburn with rack removal, cable abatement, HVAC removal, and site cleanup.";
   await db.insert(inquirySources).values({ id: seed.source, inquiryId: seed.inquiry, channel: "phone", subject: "Call notes", sender: "Michael Reynolds", rawText: sourceText, capturedByUserId: user.id });
   await db.insert(communications).values({ id: seed.communication, inquiryId: seed.inquiry, contactId: seed.contact, direction: "inbound", channel: "phone", subject: "Call notes", body: sourceText, status: "received", createdByUserId: user.id });
@@ -33,7 +35,7 @@ export async function ensureBootstrap(env, user, accountId = ACCOUNT_ID) {
     { id: seed.missingRacks, inquiryId: seed.inquiry, requirementKey: "rack_count", label: "Number of racks / cabinets", category: "equipment", severity: "high", status: "open" },
     { id: seed.missingPhotos, inquiryId: seed.inquiry, requirementKey: "site_photos", label: "Photos or docs from site", category: "documentation", severity: "medium", status: "open" }
   ]);
-  await createActivity(env, accountId, seed.inquiry, user.id, "inquiry.seeded", "Seeded NTT Data inquiry for demo workspace");
+  await createActivity(env, accountId, seed.inquiry, user.id, "inquiry.seeded", "Added NTT Data inquiry to the workspace");
   await markWorkspaceInitialized(db, user.id, workspaceSettings);
 }
 
@@ -43,7 +45,7 @@ export async function readinessReport(env, user, accountId = ACCOUNT_ID) {
   const checks = [
     { key: "d1_binding", ok: Boolean(env.DB), detail: "D1 binding DB is configured through Drizzle ORM." },
     { key: "r2_binding", ok: Boolean(env.FILES), detail: env.FILES ? "R2 binding FILES is configured." : "R2 binding FILES is missing." },
-    { key: "schema", ok: true, detail: "28 Drizzle-managed database tables available." },
+    { key: "schema", ok: true, detail: "42 Drizzle-managed database tables available." },
     { key: "account", ok: Boolean(account), detail: account ? `Account ${accountId} is present.` : `Account ${accountId} bootstrap is missing.` },
     { key: "user_identity", ok: Boolean(user?.email), detail: user?.email ? `Authenticated as ${user.email}.` : "No user identity detected." },
     { key: "auth_mode", ok: Boolean(env.AUTH_SESSION_SECRET || user?.authMode === "trusted_dev_headers"), warningOnly: true, detail: env.AUTH_SESSION_SECRET ? "Signed session authentication is enforced." : "Using trusted development identity headers; configure AUTH_SESSION_SECRET before production." },
@@ -56,7 +58,7 @@ export async function readinessReport(env, user, accountId = ACCOUNT_ID) {
 }
 
 export function publicUser(user) {
-  return { id: user.id, accountId: user.account_id || user.accountId, email: user.email, fullName: user.full_name || user.fullName, role: user.role, avatarUrl: user.avatar_url || user.avatarUrl || null };
+  return { id: user.id, accountId: user.account_id || user.accountId, email: user.email, fullName: user.full_name || user.fullName, role: user.role, avatarUrl: user.avatar_url || user.avatarUrl || null, timezone: user.timezone || "America/New_York", locale: user.locale || "en-US" };
 }
 
 async function markWorkspaceInitialized(db, userId, settings) {
@@ -64,6 +66,18 @@ async function markWorkspaceInitialized(db, userId, settings) {
 }
 
 function parseSettings(value) { try { return typeof value === "string" ? JSON.parse(value) : value || {}; } catch { return {}; } }
+
+async function seedSavedViews(db, userId) {
+  const defaults = [
+    { id: `view_${userId}_my_open`, userId, screen: "inquiries", name: "My open", filtersJson: JSON.stringify({ owner: "me", status: ["new", "needs_info", "estimating", "site_visit", "proposal", "review"] }), sortJson: JSON.stringify({ key: "priority", direction: "asc" }), isDefault: true },
+    { id: `view_${userId}_needs_info`, userId, screen: "inquiries", name: "Needs info", filtersJson: JSON.stringify({ status: ["needs_info"] }), sortJson: JSON.stringify({ key: "lastActivity", direction: "desc" }) },
+    { id: `view_${userId}_proposals_due`, userId, screen: "inquiries", name: "Proposals due", filtersJson: JSON.stringify({ status: ["proposal", "review"] }), sortJson: JSON.stringify({ key: "requestedDueDate", direction: "asc" }) },
+    { id: `view_${userId}_recent_docs`, userId, screen: "docs", name: "Recent", filtersJson: JSON.stringify({ kind: "recent" }), sortJson: JSON.stringify({ key: "updatedAt", direction: "desc" }), isDefault: true }
+  ];
+  for (const view of defaults) {
+    await db.insert(userSavedViews).values(view).onConflictDoNothing();
+  }
+}
 
 function seedIds(accountId) {
   const suffix = accountId === ACCOUNT_ID ? "" : `_${accountId.replace(/[^a-zA-Z0-9]+/g, "_").slice(0, 32)}`;
@@ -77,6 +91,7 @@ function seedIds(accountId) {
     summary: `sum_ntt_intake${suffix}`,
     missingSqft: `miss_ntt_sqft${suffix}`,
     missingRacks: `miss_ntt_racks${suffix}`,
-    missingPhotos: `miss_ntt_photos${suffix}`
+    missingPhotos: `miss_ntt_photos${suffix}`,
+    watcher: `watch_ntt_owner${suffix}`
   };
 }

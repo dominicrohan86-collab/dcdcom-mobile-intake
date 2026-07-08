@@ -8,6 +8,7 @@ import { AddInquiryScreen } from "./screens/AddInquiry";
 import { EmailScreen, ProposalScreen } from "./screens/Composers";
 import { InquiryDetailScreen, DetailLoading } from "./screens/InquiryDetail";
 import { DocsScreen, MoreScreen } from "./screens/Library";
+import { LoginScreen } from "./screens/Login";
 import { PipelineScreen } from "./screens/Queues";
 import { TodayScreen } from "./screens/Today";
 
@@ -15,19 +16,97 @@ const detailScreens = new Set(["detail", "docs", "email", "proposal"]);
 
 export function App() {
   const queryClient = useQueryClient();
-  const [screen, setScreen] = React.useState("today");
+  const initialRoute = React.useMemo(() => routeFromLocation(), []);
+  const routeInitialized = React.useRef(initialRoute.explicit);
+  const [screen, setScreen] = React.useState(initialRoute.screen);
   const [history, setHistory] = React.useState([]);
-  const [selectedId, setSelectedId] = React.useState(null);
+  const [selectedId, setSelectedId] = React.useState(initialRoute.selectedId);
   const [documentToOpen, setDocumentToOpen] = React.useState(null);
   const [notice, setNotice] = React.useState("");
   const [analysis, setAnalysis] = React.useState(null);
+  const [signedOut, setSignedOut] = React.useState(() => isAuthRoute());
   const online = useOnlineStatus();
-  const bootstrap = useQuery({ queryKey: ["bootstrap"], queryFn: client.bootstrap });
+  const bootstrap = useQuery({ queryKey: ["bootstrap"], queryFn: client.bootstrap, enabled: !signedOut });
   const inquiries = bootstrap.data?.inquiries || [];
+  const draftScope = React.useMemo(() => workspaceDraftScope(bootstrap.data), [bootstrap.data?.accountId, bootstrap.data?.user?.id, bootstrap.data?.user?.email]);
+  const login = useMutation({
+    mutationFn: client.login,
+    onSuccess: async () => {
+      setNotice("");
+      setSignedOut(false);
+      setHistory([]);
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      replaceUrl("/today");
+    }
+  });
+  const signup = useMutation({
+    mutationFn: client.signup,
+    onSuccess: async () => {
+      setNotice("");
+      setSignedOut(false);
+      setHistory([]);
+      setScreen("today");
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      replaceUrl("/today");
+    }
+  });
+  const resetPassword = useMutation({
+    mutationFn: client.resetPassword,
+    onSuccess: async () => {
+      setSignedOut(false);
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      replaceUrl("/today");
+    }
+  });
+  const acceptInvite = useMutation({
+    mutationFn: client.acceptInvite,
+    onSuccess: async () => {
+      setSignedOut(false);
+      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      replaceUrl("/today");
+    }
+  });
+  const logout = useMutation({
+    mutationFn: client.logout,
+    onSuccess: async () => {
+      setSelectedId(null);
+      setHistory([]);
+      setScreen("today");
+      setSignedOut(true);
+      queryClient.removeQueries();
+      replaceUrl("/login");
+    }
+  });
 
   React.useEffect(() => {
-    if (!selectedId && inquiries[0]?.id) setSelectedId(inquiries[0].id);
-  }, [inquiries, selectedId]);
+    if (selectedId || !inquiries[0]?.id || !bootstrap.data?.user?.id) return;
+    const savedId = readLocalValue(`dcdcom:${draftScope}:last-selected-inquiry`);
+    setSelectedId(inquiries.some((inquiry) => inquiry.id === savedId) ? savedId : inquiries[0].id);
+  }, [bootstrap.data?.user?.id, draftScope, inquiries, selectedId]);
+
+  React.useEffect(() => {
+    if (selectedId && bootstrap.data?.user?.id) writeLocalValue(`dcdcom:${draftScope}:last-selected-inquiry`, selectedId);
+  }, [bootstrap.data?.user?.id, draftScope, selectedId]);
+
+  React.useEffect(() => {
+    const defaultView = bootstrap.data?.preferences?.defaultView || bootstrap.data?.preferences?.default_view;
+    if (!routeInitialized.current && defaultView && ["today", "pipeline", "docs", "more"].includes(defaultView)) {
+      routeInitialized.current = true;
+      setScreen(defaultView);
+      replaceUrl(pathForScreen(defaultView, selectedId));
+    }
+  }, [bootstrap.data?.preferences?.defaultView, bootstrap.data?.preferences?.default_view]);
+
+  React.useEffect(() => {
+    const onPopState = () => {
+      const route = routeFromLocation();
+      setSignedOut(isAuthRoute());
+      setScreen(route.screen);
+      if (route.selectedId) setSelectedId(route.selectedId);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const detail = useQuery({
     queryKey: ["inquiry", selectedId],
@@ -53,7 +132,10 @@ export function App() {
         ? ` ${result.uploadedPhotoCount} attached; ${result.failedPhotoCount} could not be uploaded.`
         : result.uploadedPhotoCount ? ` ${result.uploadedPhotoCount} ${result.uploadedPhotoCount === 1 ? "photo" : "photos"} attached.` : "";
       setNotice(`Inquiry saved and added to the queue.${photoMessage}`);
-      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["bootstrap"] }),
+        queryClient.invalidateQueries({ queryKey: ["notifications"] })
+      ]);
       go("detail");
     }
   });
@@ -62,29 +144,41 @@ export function App() {
     if (next !== screen && options.replace !== true) setHistory((items) => [...items.slice(-10), screen]);
     setNotice("");
     setScreen(next);
+    const nextPath = pathForScreen(next, selectedId);
+    if (options.replace) replaceUrl(nextPath);
+    else pushUrl(nextPath);
   }
 
   function back() {
     setHistory((items) => {
       const copy = [...items];
-      setScreen(copy.pop() || "today");
+      const previous = copy.pop() || "today";
+      setScreen(previous);
+      replaceUrl(pathForScreen(previous, selectedId));
       return copy;
     });
   }
 
   function open(id) {
     setSelectedId(id);
-    go("detail");
+    navigateTo("detail", id);
   }
 
   function openWorkflow(id, target = "detail") {
     setSelectedId(id);
-    go(target);
+    navigateTo(target, id);
   }
 
   function openDocument(documentId) {
     setDocumentToOpen(documentId);
-    go("docs");
+    navigateTo("docs", selectedId);
+  }
+
+  function openNotification(notification) {
+    const relatedInquiryId = notification.relatedInquiryId;
+    const target = ["today", "pipeline", "detail", "docs", "email", "proposal"].includes(notification.actionRoute) ? notification.actionRoute : (notification.relatedInquiryId ? "detail" : "today");
+    if (relatedInquiryId) navigateTo(target, relatedInquiryId);
+    else go(target);
   }
 
   async function handleInquiryDeleted(id, title) {
@@ -97,28 +191,40 @@ export function App() {
     setSelectedId(remaining[0]?.id || null);
     setHistory([]);
     setScreen("pipeline");
+    replaceUrl("/inquiries");
     setNotice(`${title} and all linked data were deleted.`);
   }
 
+  function navigateTo(next, id = selectedId, options = {}) {
+    if (next !== screen && options.replace !== true) setHistory((items) => [...items.slice(-10), screen]);
+    setNotice("");
+    setScreen(next);
+    if (id) setSelectedId(id);
+    const nextPath = pathForScreen(next, id);
+    if (options.replace) replaceUrl(nextPath);
+    else pushUrl(nextPath);
+  }
+
+  if (signedOut || (bootstrap.error && isUnauthorized(bootstrap.error))) return <LoginScreen login={(payload) => login.mutate(payload)} signup={(payload) => signup.mutate(payload)} resetPassword={(payload) => resetPassword.mutate(payload)} acceptInvite={(payload) => acceptInvite.mutate(payload)} busy={login.isPending || signup.isPending || resetPassword.isPending || acceptInvite.isPending} error={login.error?.message || signup.error?.message || resetPassword.error?.message || acceptInvite.error?.message} />;
   if (bootstrap.isLoading) return <main className="grid min-h-dvh place-items-center bg-slate-100 text-sm text-slate-500">Loading workspace...</main>;
   if (bootstrap.error) return <main className="grid min-h-dvh place-items-center bg-slate-100 p-6"><Notice tone="error">Could not load the workspace: {bootstrap.error.message}</Notice></main>;
 
-  const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Proposal" };
+  const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Documents" };
   const hasBack = ["add", "detail", "email", "proposal"].includes(screen);
   let content;
 
   if (screen === "today") content = <TodayScreen openWorkflow={openWorkflow} />;
-  else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} notice={notice} />;
-  else if (screen === "add") content = <AddInquiryScreen analyze={(payload) => analyze.mutate(payload)} create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} />;
-  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} integrations={bootstrap.data.integrations} selectedId={selectedId} notice={notice} setNotice={setNotice} />;
+  else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} notice={notice} savedViews={bootstrap.data.personalization?.savedViews || []} />;
+  else if (screen === "add") content = <AddInquiryScreen analyze={(payload) => analyze.mutate(payload)} create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} draftScope={draftScope} />;
+  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} selectedId={selectedId} notice={notice} setNotice={setNotice} />;
   else if (detail.isLoading || !detail.data) content = detail.error ? <EmptyState>Could not load this inquiry.</EmptyState> : <DetailLoading />;
-  else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} navigate={go} openDocument={openDocument} notice={notice} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
-  else if (screen === "email") content = <EmailScreen detail={detail.data} notice={notice} setNotice={setNotice} />;
-  else if (screen === "proposal") content = <ProposalScreen detail={detail.data} notice={notice} setNotice={setNotice} />;
-  else if (screen === "docs") content = <DocsScreen inquiries={inquiries} selectedId={selectedId} selectInquiry={setSelectedId} detail={detail.data} navigate={go} initialDocumentId={documentToOpen} onDocumentOpened={() => setDocumentToOpen(null)} />;
+  else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} user={bootstrap.data.user} navigate={go} openDocument={openDocument} notice={notice} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
+  else if (screen === "email") content = <EmailScreen detail={detail.data} notice={notice} setNotice={setNotice} draftScope={draftScope} />;
+  else if (screen === "proposal") content = <ProposalScreen detail={detail.data} notice={notice} setNotice={setNotice} draftScope={draftScope} />;
+  else if (screen === "docs") content = <DocsScreen inquiries={inquiries} selectedId={selectedId} selectInquiry={(id) => { setSelectedId(id); replaceUrl(pathForScreen("docs", id)); }} detail={detail.data} navigate={go} initialDocumentId={documentToOpen} onDocumentOpened={() => setDocumentToOpen(null)} />;
   else content = <TodayScreen openWorkflow={openWorkflow} />;
 
-  return <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user}>{!online && <Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice>}{content}</Shell>;
+  return <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user} openNotification={openNotification} signOut={() => logout.mutate()} signingOut={logout.isPending}>{!online && <div aria-live="polite"><Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice></div>}{content}</Shell>;
 }
 
 function useOnlineStatus() {
@@ -133,4 +239,80 @@ function useOnlineStatus() {
     };
   }, []);
   return online;
+}
+
+function isUnauthorized(error) {
+  return error?.response?.status === 401 || String(error?.message || "").toLowerCase().includes("authentication required");
+}
+
+function isAuthRoute() {
+  if (typeof window === "undefined") return false;
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  return ["/login", "/signup", "/reset-password", "/accept-invite"].includes(path);
+}
+
+function routeFromLocation() {
+  if (typeof window === "undefined") return { screen: "today", selectedId: null, explicit: false };
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/inquiries/new") return { screen: "add", selectedId: null, explicit: true };
+  const inquiryMatch = path.match(/^\/inquiries\/([^/]+)(?:\/([^/]+))?$/);
+  if (inquiryMatch) {
+    const selectedId = decodeURIComponent(inquiryMatch[1]);
+    const child = inquiryMatch[2];
+    if (child === "follow-up") return { screen: "email", selectedId, explicit: true };
+    if (child === "proposal") return { screen: "proposal", selectedId, explicit: true };
+    if (child === "documents") return { screen: "docs", selectedId, explicit: true };
+    return { screen: "detail", selectedId, explicit: true };
+  }
+  const routes = {
+    "/": "today",
+    "/today": "today",
+    "/inquiries": "pipeline",
+    "/docs": "docs",
+    "/documents": "docs",
+    "/profile": "more",
+    "/settings": "more",
+    "/notifications": "today"
+  };
+  return { screen: routes[path] || "today", selectedId: null, explicit: path !== "/" };
+}
+
+function pathForScreen(screen, selectedId) {
+  if (screen === "pipeline") return "/inquiries";
+  if (screen === "add") return "/inquiries/new";
+  if (screen === "detail" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}`;
+  if (screen === "email" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/follow-up`;
+  if (screen === "proposal" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/proposal`;
+  if (screen === "docs" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/documents`;
+  if (screen === "docs") return "/docs";
+  if (screen === "more") return "/profile";
+  return "/today";
+}
+
+function pushUrl(path) {
+  if (typeof window === "undefined" || window.location.pathname === path) return;
+  window.history.pushState({}, "", path);
+}
+
+function replaceUrl(path) {
+  if (typeof window === "undefined" || window.location.pathname === path) return;
+  window.history.replaceState({}, "", path);
+}
+
+function workspaceDraftScope(data) {
+  const account = data?.accountId || "workspace";
+  const user = data?.user?.id || data?.user?.email || "user";
+  return [account, user].map(draftSegment).join(":");
+}
+
+function draftSegment(value) {
+  return String(value || "unknown").toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "unknown";
+}
+
+function readLocalValue(key) {
+  try { return window.localStorage.getItem(key) || ""; } catch { return ""; }
+}
+
+function writeLocalValue(key, value) {
+  try { window.localStorage.setItem(key, value); } catch {}
 }

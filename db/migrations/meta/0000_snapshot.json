@@ -1723,6 +1723,42 @@
           "notNull": false,
           "autoincrement": false
         },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "thumbnail_storage_key": {
+          "name": "thumbnail_storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "thumbnail_content_type": {
+          "name": "thumbnail_content_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "thumbnail_status": {
+          "name": "thumbnail_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "thumbnail_generated_at": {
+          "name": "thumbnail_generated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "category": {
           "name": "category",
           "type": "text",
@@ -1754,6 +1790,14 @@
             "category"
           ],
           "isUnique": false
+        },
+        "uq_files_inquiry_hash": {
+          "name": "uq_files_inquiry_hash",
+          "columns": [
+            "inquiry_id",
+            "content_hash"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {

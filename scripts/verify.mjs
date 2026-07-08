@@ -8,7 +8,7 @@ const serverFiles = [
   "src/server/bootstrap.js", "src/server/contracts.js", "src/server/db.js", "src/server/index.js",
   "src/server/observability.js",
   "src/server/repository.js", "db/drizzle-schema.js", "scripts/build.mjs", "scripts/dev-server.mjs",
-  "scripts/local-runtime.mjs", "scripts/readiness.mjs", "scripts/test-api.mjs", "vite.config.js", "drizzle.config.js"
+  "scripts/accessibility-check.mjs", "scripts/local-runtime.mjs", "scripts/performance-budget.mjs", "scripts/readiness.mjs", "scripts/release-check.mjs", "scripts/test-api.mjs", "vite.config.js", "drizzle.config.js"
 ];
 for (const file of serverFiles) await run("node", ["--check", file]);
 
@@ -18,14 +18,14 @@ for (const dependency of ["react", "@tanstack/react-query", "react-hook-form", "
 }
 
 const tableNames = Object.values(schema).filter((value) => value?.[Symbol.for("drizzle:IsDrizzleTable")]);
-assert(tableNames.length === 28, `Drizzle schema should define 28 tables, found ${tableNames.length}`);
+assert(tableNames.length === 42, `Drizzle schema should define 42 tables, found ${tableNames.length}`);
 
 const repository = await readFile("src/server/repository.js", "utf8");
 assert(!/env\.DB|\.prepare\(|\bSELECT\s|\bINSERT\s+INTO\b|\bUPDATE\s+\w+\s+SET\b/i.test(repository), "repository should use Drizzle instead of raw D1/SQL");
 for (const token of ["getDb", "db.select", "db.insert", "db.update", "deleteInquiry", "env.FILES.delete", "sendOutboundCommunication", "scheduleSiteVisit", "submitProposalForReview"]) assert(repository.includes(token), `repository should include ${token}`);
 
 const app = await readFile("src/server/app.js", "utf8");
-for (const token of ["new Hono", "zValidator", "createRequestTelemetry", "inquiryListQuerySchema", "/api/today", "app.delete(\"/api/inquiries/:id\"", "/api/inquiries/:id/generate", "/api/inquiries/:id/send-follow-up", "/api/inquiries/:id/site-visits"]) assert(app.includes(token), `Hono app should include ${token}`);
+for (const token of ["new Hono", "zValidator", "createRequestTelemetry", "loginWithPassword", "signupWithPassword", "/api/auth/login", "/api/auth/signup", "inquiryListQuerySchema", "/api/today", "app.delete(\"/api/inquiries/:id\"", "/api/inquiries/:id/generate", "/api/inquiries/:id/send-follow-up", "/api/inquiries/:id/site-visits"]) assert(app.includes(token), `Hono app should include ${token}`);
 
 const client = await readFile("src/client/App.jsx", "utf8");
 for (const token of ["useQuery", "useMutation", "QueryClient", "InquiryDetailScreen", "ProposalScreen", "DocsScreen"]) assert(client.includes(token), `React client should include ${token}`);

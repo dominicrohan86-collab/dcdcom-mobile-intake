@@ -55,6 +55,9 @@ INTEGRATION_PROVIDER_WEBHOOK=https://your-generic-adapter.example/sync
 GOOGLE_CLIENT_ID=your_google_oauth_client_id
 GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
 GOOGLE_REDIRECT_URI=http://127.0.0.1:4173/api/integrations/google-calendar/callback
+GOOGLE_LOGIN_CLIENT_ID=your_google_sign_in_oauth_client_id
+GOOGLE_LOGIN_CLIENT_SECRET=your_google_sign_in_oauth_client_secret
+GOOGLE_LOGIN_REDIRECT_URI=http://127.0.0.1:4173/api/auth/google/callback
 GOOGLE_OAUTH_STATE_SECRET=use_a_long_random_value
 GOOGLE_TOKEN_ENCRYPTION_KEY=use_a_different_long_random_value
 AUTH_SESSION_SECRET=use_a_long_random_value_for_signed_sessions
@@ -67,7 +70,7 @@ Production API requests should use a signed session token in `Authorization: Bea
 
 Generated and manually saved work products create server-side PDF export files in R2 and file metadata in D1. Uploads are byte-sniffed against their declared type, capped at 12 MB, and downloads are served with sandboxing, `nosniff`, and no-store cache headers.
 
-Google Calendar sync uses the read-only Calendar scope. Create a Google OAuth web client, enable the Google Calendar API, and add the exact `GOOGLE_REDIRECT_URI` as an authorized redirect URI. Once configured, users connect from Today or More > Integrations; access tokens refresh automatically.
+Google Sign-In and Google Calendar use separate callback paths. For sign-in, add the exact `GOOGLE_LOGIN_REDIRECT_URI` to the OAuth client's Authorized redirect URIs. For Calendar sync, enable the Google Calendar API and add the exact `GOOGLE_REDIRECT_URI`. You may use one Google web client for both if both redirect URIs are authorized, or separate `GOOGLE_LOGIN_*` credentials for identity sign-in.
 
 ## Deployment
 

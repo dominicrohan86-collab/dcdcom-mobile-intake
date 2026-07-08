@@ -75,9 +75,9 @@ export function Dialog({ open, onOpenChange, title, description, children }) {
   </DialogPrimitive.Root>;
 }
 
-export function Select({ value, onValueChange, options, label = "Choose option", className }) {
-  return <SelectPrimitive.Root value={value} onValueChange={onValueChange}>
-    <SelectPrimitive.Trigger aria-label={label} className={cn("flex min-h-9 w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-100", className)}>
+export function Select({ value, onValueChange, options, label = "Choose option", className, disabled = false }) {
+  return <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
+    <SelectPrimitive.Trigger aria-label={label} className={cn("flex min-h-9 w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500", className)}>
       <SelectPrimitive.Value /> <SelectPrimitive.Icon><ChevronDown size={16} /></SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
     <SelectPrimitive.Portal>

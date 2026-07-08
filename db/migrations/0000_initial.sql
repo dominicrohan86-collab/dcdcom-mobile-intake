@@ -13,6 +13,8 @@ CREATE TABLE `activity_events` (
 	`actor_user_id` text,
 	`event_type` text NOT NULL,
 	`summary` text NOT NULL,
+	`visibility` text DEFAULT 'internal' NOT NULL,
+	`source` text DEFAULT 'app' NOT NULL,
 	`metadata_json` text DEFAULT '{}' NOT NULL,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade,
@@ -116,6 +118,21 @@ CREATE TABLE `communications` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_communications_inquiry` ON `communications` (`inquiry_id`,`occurred_at`);--> statement-breakpoint
+CREATE TABLE `inquiry_comments` (
+	`id` text PRIMARY KEY NOT NULL,
+	`inquiry_id` text NOT NULL,
+	`author_user_id` text,
+	`body` text NOT NULL,
+	`mentions_json` text DEFAULT '[]' NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`edited_at` text,
+	`deleted_at` text,
+	FOREIGN KEY (`inquiry_id`) REFERENCES `inquiries`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`author_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE set null
+);
+--> statement-breakpoint
+CREATE INDEX `idx_comments_inquiry` ON `inquiry_comments` (`inquiry_id`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_comments_author` ON `inquiry_comments` (`author_user_id`,`created_at`);--> statement-breakpoint
 CREATE TABLE `companies` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
@@ -232,6 +249,11 @@ CREATE TABLE `files` (
 	`content_type` text NOT NULL,
 	`storage_key` text NOT NULL,
 	`size_bytes` integer,
+	`content_hash` text,
+	`thumbnail_storage_key` text,
+	`thumbnail_content_type` text,
+	`thumbnail_status` text DEFAULT 'pending' NOT NULL,
+	`thumbnail_generated_at` text,
 	`category` text NOT NULL,
 	`uploaded_by_user_id` text,
 	`uploaded_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -241,6 +263,40 @@ CREATE TABLE `files` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_files_inquiry` ON `files` (`inquiry_id`,`category`);--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_files_inquiry_hash` ON `files` (`inquiry_id`,`content_hash`);--> statement-breakpoint
+CREATE TABLE `file_share_links` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
+	`file_id` text NOT NULL,
+	`inquiry_id` text,
+	`token_hash` text NOT NULL,
+	`label` text,
+	`created_by_user_id` text,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`expires_at` text NOT NULL,
+	`revoked_at` text,
+	`last_accessed_at` text,
+	`access_count` integer DEFAULT 0 NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`file_id`) REFERENCES `files`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`inquiry_id`) REFERENCES `inquiries`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`created_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE set null
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_file_share_token` ON `file_share_links` (`token_hash`);--> statement-breakpoint
+CREATE INDEX `idx_file_shares_file` ON `file_share_links` (`file_id`,`revoked_at`,`expires_at`);--> statement-breakpoint
+CREATE INDEX `idx_file_shares_account` ON `file_share_links` (`account_id`,`created_at`);--> statement-breakpoint
+CREATE TABLE `file_retention_policies` (
+	`account_id` text PRIMARY KEY NOT NULL,
+	`retention_days` integer DEFAULT 365 NOT NULL,
+	`archive_after_days` integer DEFAULT 180 NOT NULL,
+	`legal_hold` integer DEFAULT false NOT NULL,
+	`updated_by_user_id` text,
+	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`updated_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE set null
+);
+--> statement-breakpoint
 CREATE TABLE `inquiries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
@@ -287,6 +343,17 @@ CREATE TABLE `inquiry_sources` (
 	FOREIGN KEY (`captured_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
+CREATE TABLE `inquiry_watchers` (
+	`id` text PRIMARY KEY NOT NULL,
+	`inquiry_id` text NOT NULL,
+	`user_id` text NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	FOREIGN KEY (`inquiry_id`) REFERENCES `inquiries`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_inquiry_watchers` ON `inquiry_watchers` (`inquiry_id`,`user_id`);--> statement-breakpoint
+CREATE INDEX `idx_inquiry_watchers_user` ON `inquiry_watchers` (`user_id`,`created_at`);--> statement-breakpoint
 CREATE TABLE `integration_connections` (
 	`id` text PRIMARY KEY NOT NULL,
 	`account_id` text NOT NULL,
@@ -333,6 +400,31 @@ CREATE TABLE `notification_rules` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `uq_notification_rules` ON `notification_rules` (`account_id`,`user_id`,`rule_key`);--> statement-breakpoint
+CREATE TABLE `notifications` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
+	`user_id` text NOT NULL,
+	`inquiry_id` text,
+	`type` text NOT NULL,
+	`title` text NOT NULL,
+	`message` text NOT NULL,
+	`severity` text DEFAULT 'info' NOT NULL,
+	`status` text DEFAULT 'unread' NOT NULL,
+	`action_label` text,
+	`action_route` text,
+	`metadata_json` text DEFAULT '{}' NOT NULL,
+	`dedupe_key` text NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`read_at` text,
+	`archived_at` text,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`inquiry_id`) REFERENCES `inquiries`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE INDEX `idx_notifications_user_status` ON `notifications` (`account_id`,`user_id`,`status`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_notifications_inquiry` ON `notifications` (`inquiry_id`,`created_at`);--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_notifications_dedupe` ON `notifications` (`account_id`,`user_id`,`dedupe_key`);--> statement-breakpoint
 CREATE TABLE `proposal_sections` (
 	`id` text PRIMARY KEY NOT NULL,
 	`proposal_id` text NOT NULL,
@@ -428,6 +520,10 @@ CREATE TABLE `users` (
 	`full_name` text NOT NULL,
 	`role` text NOT NULL,
 	`avatar_url` text,
+	`timezone` text DEFAULT 'America/New_York' NOT NULL,
+	`locale` text DEFAULT 'en-US' NOT NULL,
+	`last_login_at` text,
+	`last_seen_at` text,
 	`is_active` integer DEFAULT true NOT NULL,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -436,3 +532,131 @@ CREATE TABLE `users` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `users_email_unique` ON `users` (`email`);--> statement-breakpoint
 CREATE INDEX `idx_users_account` ON `users` (`account_id`);
+--> statement-breakpoint
+CREATE TABLE `auth_identities` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
+	`user_id` text NOT NULL,
+	`provider` text NOT NULL,
+	`provider_subject` text NOT NULL,
+	`email` text NOT NULL,
+	`email_verified` integer DEFAULT false NOT NULL,
+	`metadata_json` text DEFAULT '{}' NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_auth_identity_subject` ON `auth_identities` (`provider`,`provider_subject`);--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_auth_identity_account_email` ON `auth_identities` (`account_id`,`provider`,`email`);--> statement-breakpoint
+CREATE INDEX `idx_auth_identities_user` ON `auth_identities` (`user_id`);--> statement-breakpoint
+CREATE TABLE `password_credentials` (
+	`user_id` text PRIMARY KEY NOT NULL,
+	`password_hash` text NOT NULL,
+	`password_algorithm` text DEFAULT 'pbkdf2_sha256' NOT NULL,
+	`password_updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`must_reset_password` integer DEFAULT false NOT NULL,
+	`failed_attempt_count` integer DEFAULT 0 NOT NULL,
+	`locked_until` text,
+	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE TABLE `sessions` (
+	`id` text PRIMARY KEY NOT NULL,
+	`user_id` text NOT NULL,
+	`account_id` text NOT NULL,
+	`token_hash` text NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`expires_at` text NOT NULL,
+	`rotated_at` text,
+	`revoked_at` text,
+	`ip_hash` text,
+	`user_agent_hash` text,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_sessions_token_hash` ON `sessions` (`token_hash`);--> statement-breakpoint
+CREATE INDEX `idx_sessions_user` ON `sessions` (`user_id`,`revoked_at`,`expires_at`);--> statement-breakpoint
+CREATE TABLE `oauth_states` (
+	`state_hash` text PRIMARY KEY NOT NULL,
+	`code_verifier_encrypted` text NOT NULL,
+	`redirect_to` text DEFAULT '/' NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`expires_at` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `invites` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account_id` text NOT NULL,
+	`email` text NOT NULL,
+	`role` text DEFAULT 'estimator' NOT NULL,
+	`invited_by_user_id` text,
+	`token_hash` text NOT NULL,
+	`expires_at` text NOT NULL,
+	`accepted_at` text,
+	`revoked_at` text,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`invited_by_user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE set null
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_invites_token_hash` ON `invites` (`token_hash`);--> statement-breakpoint
+CREATE INDEX `idx_invites_account_email` ON `invites` (`account_id`,`email`);--> statement-breakpoint
+CREATE TABLE `password_reset_tokens` (
+	`id` text PRIMARY KEY NOT NULL,
+	`user_id` text NOT NULL,
+	`account_id` text NOT NULL,
+	`token_hash` text NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`expires_at` text NOT NULL,
+	`used_at` text,
+	`revoked_at` text,
+	`requested_ip_hash` text,
+	`requested_user_agent_hash` text,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_password_reset_token_hash` ON `password_reset_tokens` (`token_hash`);--> statement-breakpoint
+CREATE INDEX `idx_password_reset_user` ON `password_reset_tokens` (`user_id`,`used_at`,`expires_at`);--> statement-breakpoint
+CREATE TABLE `user_saved_views` (
+	`id` text PRIMARY KEY NOT NULL,
+	`user_id` text NOT NULL,
+	`screen` text NOT NULL,
+	`name` text NOT NULL,
+	`filters_json` text DEFAULT '{}' NOT NULL,
+	`sort_json` text DEFAULT '{}' NOT NULL,
+	`is_default` integer DEFAULT false NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_saved_views_user_screen_name` ON `user_saved_views` (`user_id`,`screen`,`name`);--> statement-breakpoint
+CREATE INDEX `idx_saved_views_user_screen` ON `user_saved_views` (`user_id`,`screen`);--> statement-breakpoint
+CREATE TABLE `user_recent_items` (
+	`user_id` text NOT NULL,
+	`entity_type` text NOT NULL,
+	`entity_id` text NOT NULL,
+	`last_viewed_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`metadata_json` text DEFAULT '{}' NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_user_recent_items` ON `user_recent_items` (`user_id`,`entity_type`,`entity_id`);--> statement-breakpoint
+CREATE INDEX `idx_recent_items_user` ON `user_recent_items` (`user_id`,`last_viewed_at`);--> statement-breakpoint
+CREATE TABLE `device_push_subscriptions` (
+	`id` text PRIMARY KEY NOT NULL,
+	`user_id` text NOT NULL,
+	`endpoint` text NOT NULL,
+	`keys_json` text DEFAULT '{}' NOT NULL,
+	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	`revoked_at` text,
+	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `uq_push_endpoint` ON `device_push_subscriptions` (`endpoint`);--> statement-breakpoint
+CREATE INDEX `idx_push_user` ON `device_push_subscriptions` (`user_id`,`revoked_at`);

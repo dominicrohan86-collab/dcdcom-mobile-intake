@@ -9,8 +9,9 @@ const intakeSchema = z.object({ notes: z.string().trim().min(20, "Add at least 2
 const channels = ["Call Notes", "Email", "Manual"];
 const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
 
-export function AddInquiryScreen({ analyze, create, busy, result, error }) {
-  const savedDraft = readDraft("dcdcom:intake-draft");
+export function AddInquiryScreen({ analyze, create, busy, result, error, draftScope = "workspace:user" }) {
+  const draftKey = `dcdcom:${draftScope}:intake-draft`;
+  const savedDraft = readDraft(draftKey);
   const [channel, setChannel] = React.useState(savedDraft.channel || "Call Notes");
   const [photos, setPhotos] = React.useState([]);
   const [photoError, setPhotoError] = React.useState("");
@@ -20,8 +21,8 @@ export function AddInquiryScreen({ analyze, create, busy, result, error }) {
   });
   const notes = watch("notes");
   const payload = (values) => ({ rawText: values.notes, sourceChannel: sourceFor(channel), subject: `${channel} intake`, sender: "Customer" });
-  React.useEffect(() => writeDraft("dcdcom:intake-draft", { channel, notes }), [channel, notes]);
-  React.useEffect(() => { if (result?.id) removeDraft("dcdcom:intake-draft"); }, [result?.id]);
+  React.useEffect(() => writeDraft(draftKey, { channel, notes }), [draftKey, channel, notes]);
+  React.useEffect(() => { if (result?.id) removeDraft(draftKey); }, [draftKey, result?.id]);
 
   function addPhotos(selectedFiles) {
     const selected = Array.from(selectedFiles || []);

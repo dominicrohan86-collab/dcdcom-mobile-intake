@@ -239,12 +239,90 @@ const WORK_PRODUCT_SCHEMA = {
   }
 };
 
+const WORK_PRODUCT_REFERENCES = {
+  proposal: {
+    purpose: "Create a customer-ready proposal that can be reviewed internally and then sent to the decision maker.",
+    requiredSections: ["Executive summary", "Scope of work", "Assumptions", "Commercial range", "Exclusions", "Customer responsibilities", "Next steps"],
+    requiredData: ["customer and site identity", "service type", "known equipment or work areas", "timeline or lease pressure", "access constraints", "estimate range", "missing requirements"],
+    qualityBar: "The proposal must read like a complete commercial document while clearly labeling unconfirmed facts as assumptions or risks."
+  },
+  scope_of_work: {
+    purpose: "Create an operations-ready scope document for estimator, project manager, and field team alignment.",
+    requiredSections: ["In-scope work", "Out-of-scope work", "Site conditions", "Dependencies", "Deliverables", "Acceptance criteria"],
+    requiredData: ["work areas", "equipment and material categories", "access constraints", "electrical or safety notes", "documentation requirements", "open missing requirements"],
+    qualityBar: "The scope must be specific enough for execution planning and must avoid commercial promises that belong in the proposal."
+  },
+  estimate: {
+    purpose: "Create a defensible preliminary estimate with line-item basis and visible pricing assumptions.",
+    requiredSections: ["Estimate range", "Line-item basis", "Assumptions", "Pricing risks", "Items that could change price"],
+    requiredData: ["known quantities", "service type", "labor/logistics drivers", "access or loading constraints", "subcontractor needs", "risk assumptions"],
+    qualityBar: "The estimate must explain why the range exists and what data would tighten it."
+  },
+  site_checklist: {
+    purpose: "Create a site-visit checklist that captures all field data needed before final pricing or execution.",
+    requiredSections: ["Before arrival", "Access verification", "Photos to capture", "Counts to verify", "Safety questions", "Estimator follow-up"],
+    requiredData: ["site/contact access", "equipment focus", "known missing requirements", "photo needs", "safety/electrical uncertainties"],
+    qualityBar: "The checklist must be actionable on a phone during a walkthrough and each item should produce useful estimator evidence."
+  },
+  follow_up_email: {
+    purpose: "Create a concise customer follow-up that asks for the missing data needed to move the inquiry forward.",
+    requiredSections: ["Greeting", "Context", "Questions", "Suggested next step", "Signature"],
+    requiredData: ["contact name", "project summary", "missing requirements", "timeline pressure", "preferred communication channel"],
+    qualityBar: "The email must ask only for information that is actually missing and should sound professional, direct, and helpful."
+  }
+};
+
+const WORK_PRODUCT_DEVELOPER_PROMPT = [
+  "You are DCDecom's senior estimator and customer success drafter.",
+  "Generate only practical, customer-ready work product content for data center decommissioning workflows.",
+  "Use the supplied workProductReference as the controlling document brief for purpose, required sections, required data, and quality bar.",
+  "Every required section must be represented in either sections or body unless it is irrelevant; if omitted, explain why in missingRiskNotes.",
+  "Do not invent confirmed facts. Convert unknown required data into assumptions, missingRiskNotes, or nextActions.",
+  "Use all available inquiry, extracted field, missing requirement, summary, and existing document data before asking for more information.",
+  "Treat sourceDocuments as the user-selected files for this run. Use allSelectedProjectFileMetadata only for awareness, not as controlling evidence.",
+  "Apply userInstructions as explicit drafting direction unless it conflicts with known project data.",
+  "Use concise professional language suitable for a mobile operations workflow."
+].join(" ");
+
+const AI_PROMPT_REGISTRY = [
+  {
+    id: "intake_extraction.v2026-07-04",
+    runType: "intake_extraction",
+    version: "2026-07-04",
+    status: "active",
+    schemaName: "dcdcom_intake_extraction",
+    summary: "Extracts customer communications into inquiry, site, contact, missing-requirement, estimate, and next-action fields.",
+    modelDefault: "gpt-5.5",
+    fallback: "local-rules"
+  },
+  {
+    id: "work_product.v2026-07-04",
+    runType: "work_product",
+    version: "2026-07-04",
+    status: "active",
+    schemaName: "dcdcom_work_product",
+    summary: "Generates follow-up emails, proposals, scopes, estimates, and site checklists from inquiry data and selected source documents.",
+    modelDefault: "gpt-5.5",
+    fallback: "local-rules"
+  }
+];
+
+export function listAiPromptRegistry() {
+  return AI_PROMPT_REGISTRY.map((entry) => ({ ...entry }));
+}
+
+export function promptVersionForRunType(runType) {
+  if (runType === "intake_extraction") return AI_PROMPT_REGISTRY[0].id;
+  return AI_PROMPT_REGISTRY[1].id;
+}
+
 export async function analyzeIntake(env, { rawText, sourceChannel = "manual", subject = "", sender = "", attachmentText = "" }) {
   const normalizedText = String(rawText || "").trim();
   if (normalizedText.length < 12) {
     return {
       mode: "fallback",
       model: "local-rules",
+      promptVersionId: promptVersionForRunType("intake_extraction"),
       extraction: fallbackExtraction(normalizedText, sourceChannel),
       error: "Intake text was too short for live AI analysis."
     };
@@ -254,6 +332,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
     return {
       mode: "fallback",
       model: "local-rules",
+      promptVersionId: promptVersionForRunType("intake_extraction"),
       extraction: fallbackExtraction(normalizedText, sourceChannel),
       error: "OPENAI_API_KEY is not configured."
     };
@@ -280,6 +359,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
     return {
       mode: "live",
       model,
+      promptVersionId: promptVersionForRunType("intake_extraction"),
       latencyMs: Date.now() - started,
       extraction: normalizeExtraction(parsed, sourceChannel),
       rawResponseId: data.id
@@ -288,6 +368,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
     return {
       mode: "fallback",
       model,
+      promptVersionId: promptVersionForRunType("intake_extraction"),
       latencyMs: Date.now() - started,
       extraction: fallbackExtraction(normalizedText, sourceChannel),
       error: error.message
@@ -295,11 +376,19 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
   }
 }
 
-export async function generateWorkProduct(env, { type, inquiry, fields = [], missing = [], summaries = [], documents = [], tone = "Professional" }) {
+export async function generateWorkProduct(env, { type, inquiry, fields = [], missing = [], summaries = [], documents = [], files = [], tone = "Professional", sourceDocumentIds, additionalContext = "" }) {
   const normalizedType = normalizeWorkProductType(type);
-  const fallback = () => fallbackWorkProduct({ type: normalizedType, inquiry, fields, missing, summaries, tone });
+  const selectedFiles = selectedSourceFiles(files, sourceDocumentIds);
+  const sourceDocuments = uploadedFileContext(selectedFiles);
+  const context = String(additionalContext || "").trim();
+  const generationContext = {
+    selectedSourceDocumentIds: Array.isArray(sourceDocumentIds) ? sourceDocumentIds : sourceDocuments.map((file) => file.id).filter(Boolean),
+    sourceDocuments,
+    additionalContext: context || null
+  };
+  const fallback = () => fallbackWorkProduct({ type: normalizedType, inquiry, fields, missing, summaries, files: selectedFiles, tone, additionalContext: context });
   if (!env?.OPENAI_API_KEY) {
-    return { mode: "fallback", model: "local-rules", product: fallback(), error: "OPENAI_API_KEY is not configured." };
+    return { mode: "fallback", model: "local-rules", promptVersionId: promptVersionForRunType("work_product"), product: fallback(), generationContext, error: "OPENAI_API_KEY is not configured." };
   }
   const started = Date.now();
   const model = env.OPENAI_MODEL || "gpt-5.5";
@@ -308,35 +397,40 @@ export async function generateWorkProduct(env, { type, inquiry, fields = [], mis
       model,
       schemaName: "dcdcom_work_product",
       schema: WORK_PRODUCT_SCHEMA,
-      developerText: [
-        "You are DCDecom's senior estimator and customer success drafter.",
-        "Generate only practical, customer-ready work product content for data center decommissioning workflows.",
-        "Do not invent confirmed facts. Surface assumptions and approval risks clearly.",
-        "Use concise professional language suitable for a mobile operations workflow."
-      ].join(" "),
+      developerText: WORK_PRODUCT_DEVELOPER_PROMPT,
       userText: JSON.stringify({
         requestedType: normalizedType,
         tone,
-        inquiry,
-        extractedFields: fields,
-        missingRequirements: missing,
-        existingSummaries: summaries,
-        existingDocuments: documents
+        workProductReference: WORK_PRODUCT_REFERENCES[normalizedType],
+        projectData: {
+          inquiry,
+          extractedFields: fields,
+          missingRequirements: missing,
+          existingSummaries: summaries,
+          existingDocuments: documents
+        },
+        sourceDocuments,
+        allSelectedProjectFileMetadata: uploadedFileContext(files),
+        userInstructions: context || null
       }, null, 2)
     });
     return {
       mode: "live",
       model,
+      promptVersionId: promptVersionForRunType("work_product"),
       latencyMs: Date.now() - started,
       product: normalizeWorkProduct(parsed, normalizedType, inquiry),
+      generationContext,
       rawResponseId: data.id
     };
   } catch (error) {
     return {
       mode: "fallback",
       model,
+      promptVersionId: promptVersionForRunType("work_product"),
       latencyMs: Date.now() - started,
       product: fallback(),
+      generationContext,
       error: error.message
     };
   }
@@ -373,39 +467,57 @@ function parseResponseJson(data) {
 }
 
 async function callOpenAiJson(env, { model, schemaName, schema, developerText, userText }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      input: [
-        {
-          role: "developer",
-          content: [{ type: "input_text", text: developerText }]
-        },
-        {
-          role: "user",
-          content: [{ type: "input_text", text: userText }]
+  const timeoutMs = openAiTimeoutMs(env);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        input: [
+          {
+            role: "developer",
+            content: [{ type: "input_text", text: developerText }]
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: userText }]
+          }
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: schemaName,
+            strict: true,
+            schema
+          }
         }
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: schemaName,
-          strict: true,
-          schema
-        }
-      }
-    })
-  });
+      })
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error(`OpenAI request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data?.error?.message || `OpenAI request failed with ${response.status}`);
   }
   return { parsed: parseResponseJson(data), data };
+}
+
+function openAiTimeoutMs(env) {
+  const value = Number(env?.OPENAI_REQUEST_TIMEOUT_MS);
+  if (Number.isFinite(value) && value >= 1000 && value <= 110000) return Math.round(value);
+  return 75_000;
 }
 
 function normalizeExtraction(extraction, sourceChannel) {
@@ -514,9 +626,14 @@ function normalizeLineItems(items, low, high) {
   })).slice(0, 8);
 }
 
-function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, tone }) {
+function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, files, tone, additionalContext = "" }) {
   const field = (key) => fields.find((item) => item.field_key === key)?.value_text;
   const missingLabels = missing.map((item) => item.label);
+  const sourceFiles = uploadedFileContext(files);
+  const sourceFileText = sourceFiles.length
+    ? `Source files available: ${sourceFiles.map((file) => `${file.categoryLabel}: ${file.fileName}`).join("; ")}.`
+    : "No uploaded source files are available yet.";
+  const instructionText = additionalContext ? ` User instructions: ${additionalContext}` : "";
   const summary = summaries[0]?.body || `${inquiry.company_name || "Customer"} requested ${serviceLabelFromType(inquiry.service_type).toLowerCase()}.`;
   const low = inquiry.estimated_low_cents || 2500000;
   const high = inquiry.estimated_high_cents || 4500000;
@@ -529,7 +646,7 @@ function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, tone }
     {
       key: "assumptions",
       title: "Assumptions",
-      body: `Assumes normal site access, customer-provided approvals, and no hidden hazardous or energized conditions. Missing items: ${missingLabels.join(", ") || "none identified"}.`
+      body: `Assumes normal site access, customer-provided approvals, and no hidden hazardous or energized conditions. ${sourceFileText}${instructionText} Missing items: ${missingLabels.join(", ") || "none identified"}.`
     },
     {
       key: "deliverables",
@@ -580,6 +697,28 @@ function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, tone }
     missingRiskNotes: missingLabels.map((label) => `${label} may affect price or schedule.`),
     nextActions: missingLabels.length ? ["Send follow-up questions", "Schedule site visit", "Review estimate assumptions"] : ["Review estimate", "Send proposal for approval"]
   }, type, inquiry);
+}
+
+function uploadedFileContext(files = []) {
+  return files
+    .filter((file) => file?.category !== "document_export")
+    .slice(0, 12)
+    .map((file) => ({
+      id: file.id || null,
+      fileName: file.file_name || file.fileName || "Uploaded file",
+      category: file.category || "other",
+      categoryLabel: fileCategoryLabel(file.category),
+      contentType: file.content_type || file.contentType || null,
+      sizeBytes: file.size_bytes || file.sizeBytes || null,
+      uploadedAt: file.uploaded_at || file.uploadedAt || null
+    }));
+}
+
+function selectedSourceFiles(files = [], sourceDocumentIds) {
+  const usableFiles = files.filter((file) => file?.category !== "document_export");
+  if (!Array.isArray(sourceDocumentIds)) return usableFiles;
+  const selected = new Set(sourceDocumentIds.map(String));
+  return usableFiles.filter((file) => selected.has(String(file.id)));
 }
 
 function normalizeWorkProductType(type) {
@@ -716,9 +855,37 @@ function accessFrom(text) {
 }
 
 function dateFrom(text) {
-  const jul = /july\s+(15|31)|jul\.?\s+(15|31)/i.exec(text);
-  if (jul) return `2025-07-${jul[1] || jul[2]}`;
+  const iso = /\b(20\d{2})-(\d{2})-(\d{2})\b/.exec(text);
+  if (iso) return iso[0];
+  const slash = /\b(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])(?:\/(20\d{2}))?\b/.exec(text);
+  if (slash) return dateStringFromParts(Number(slash[3]) || null, Number(slash[1]) - 1, Number(slash[2]));
+  const names = {
+    jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4, jun: 5, june: 5,
+    jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11
+  };
+  const named = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+([0-3]?\d)(?:st|nd|rd|th)?(?:,\s*(20\d{2}))?\b/i.exec(text);
+  if (named) return dateStringFromParts(Number(named[3]) || null, names[named[1].toLowerCase()], Number(named[2]));
   return null;
+}
+
+function dateStringFromParts(explicitYear, monthIndex, day) {
+  if (!Number.isInteger(monthIndex) || monthIndex < 0 || monthIndex > 11 || day < 1 || day > 31) return null;
+  const reference = new Date();
+  let year = explicitYear || reference.getFullYear();
+  let date = new Date(Date.UTC(year, monthIndex, day));
+  if (date.getUTCMonth() !== monthIndex || date.getUTCDate() !== day) return null;
+  if (!explicitYear) {
+    const today = new Date(Date.UTC(reference.getFullYear(), reference.getMonth(), reference.getDate()));
+    if (date < today) {
+      year += 1;
+      date = new Date(Date.UTC(year, monthIndex, day));
+    }
+  }
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function fileCategoryLabel(value) {
+  return String(value || "source").replaceAll("_", " ");
 }
 
 function scopeFor(serviceLabel, assets) {
