@@ -1,12 +1,16 @@
 import React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
-import { AlertTriangle, Calculator, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, FileCheck, FileImage, FileText, ListChecks, RefreshCw, Send, Sparkles, Upload, X } from "lucide-react";
+import { AlertTriangle, Calculator, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, FileCheck, FileImage, FileText, ListChecks, MailCheck, MessageSquareText, RefreshCw, Send, Sparkles, Upload, X } from "lucide-react";
 import { client } from "../lib/api";
-import { AccordionSection, Badge, Button, Checkbox, Dialog, Field, Notice, Select, Tabs, Textarea } from "../components/ui";
+import { AccordionSection, Badge, Button, Dialog, Field, Notice, Select, Textarea } from "../components/ui";
 import { cn, moneyRange } from "../lib/utils";
 
-const tones = ["Professional", "Concise", "Warm", "Formal"];
+const responseGoals = [
+  { value: "info_request", label: "Request info", tone: "Professional", icon: MessageSquareText, description: "Ask for missing details and source documents." },
+  { value: "schedule_visit", label: "Schedule visit", tone: "Warm", icon: ClipboardCheck, description: "Move the client toward a site walk." },
+  { value: "proposal_ready", label: "Proposal-ready", tone: "Concise", icon: MailCheck, description: "Confirm scope and next steps clearly." }
+];
 const fileCategoryOptions = [["other", "General document"], ["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
 const uploadShortcuts = [["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
 
@@ -15,29 +19,99 @@ export function EmailScreen({ detail, notice, setNotice, draftScope = "workspace
   const existing = detail.documents?.find((document) => document.document_type === "follow_up_email");
   const draftKey = `dcdcom:${draftScope}:email-draft:${detail.inquiry.id}`;
   const draft = readDraft(draftKey);
-  const [tone, setTone] = React.useState(draft.tone || "Professional");
+  const [goal, setGoal] = React.useState(draft.goal || "info_request");
   const [body, setBody] = React.useState(draft.body || existing?.body || "");
   const [subject, setSubject] = React.useState(draft.subject || existing?.subject || `Follow-up on ${detail.inquiry.title}`);
-  const [include, setInclude] = React.useState(draft.include || { missing: true, visit: true, overview: true, photos: true });
+  const goalConfig = responseGoals.find((item) => item.value === goal) || responseGoals[0];
+  const missingCount = detail.missing?.filter((entry) => ["open", "requested"].includes(entry.status)).length || 0;
+  const fileCount = detail.files?.length || 0;
+  const documentCount = detail.documents?.length || 0;
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["inquiry", detail.inquiry.id] }),
     queryClient.invalidateQueries({ queryKey: ["notifications"] })
   ]);
-  const generate = useMutation({ mutationFn: () => client.generate(detail.inquiry.id, "follow_up_email", tone), onSuccess: (result) => { setBody(result.product.body); setSubject(result.product.subject || subject); setNotice("Follow-up email generated and saved."); refresh(); } });
-  const save = useMutation({ mutationFn: () => client.saveDocument(detail.inquiry.id, { documentId: existing?.id, documentType: "follow_up_email", title: `Follow-up Email - ${detail.inquiry.title}`, subject, body, expectedVersion: existing?.current_version, metadata: { include, tone } }), onSuccess: () => { removeDraft(draftKey); setNotice("Draft saved as a new version."); refresh(); } });
-  const send = useMutation({ mutationFn: () => client.sendFollowUp(detail.inquiry.id, { documentId: existing?.id, title: `Follow-up Email - ${detail.inquiry.title}`, subject, body, channel: "email", expectedVersion: existing?.current_version, metadata: { include, tone } }), onSuccess: (result) => { removeDraft(draftKey); setNotice(result.communication.status === "sent" ? "Follow-up sent and logged." : "Follow-up queued and logged."); refresh(); } });
+  const generate = useMutation({ mutationFn: () => client.generate(detail.inquiry.id, { type: "follow_up_email", tone: goalConfig.tone, responseGoal: goal }), onSuccess: (result) => { setBody(result.product.body); setSubject(result.product.subject || subject); setNotice("Response draft generated and saved."); refresh(); } });
+  const save = useMutation({ mutationFn: () => client.saveDocument(detail.inquiry.id, { documentId: existing?.id, documentType: "follow_up_email", title: `Follow-up Email - ${detail.inquiry.title}`, subject, body, expectedVersion: existing?.current_version, metadata: { goal, tone: goalConfig.tone } }), onSuccess: () => { removeDraft(draftKey); setNotice("Response saved as a new version."); refresh(); } });
+  const send = useMutation({ mutationFn: () => client.sendFollowUp(detail.inquiry.id, { documentId: existing?.id, title: `Follow-up Email - ${detail.inquiry.title}`, subject, body, channel: "email", expectedVersion: existing?.current_version, metadata: { goal, tone: goalConfig.tone } }), onSuccess: (result) => { removeDraft(draftKey); setNotice(result.communication.status === "sent" ? "Response sent and logged." : "Response queued and logged."); refresh(); } });
   const busy = generate.isPending || save.isPending || send.isPending;
-  React.useEffect(() => writeDraft(draftKey, { tone, body, subject, include }), [draftKey, tone, body, subject, include]);
+  React.useEffect(() => writeDraft(draftKey, { goal, body, subject }), [draftKey, goal, body, subject]);
 
-  return <>
-    <h2 className="text-xl font-bold">Follow-up Email</h2>
-    <div className="mt-4"><Tabs value={tone} onValueChange={setTone} options={tones} /></div>
-    <div className="mt-4"><AccordionSection value="include" title="Include in draft" meta={`${Object.values(include).filter(Boolean).length} selected`}>{Object.entries({ missing: "Missing questions", visit: "Site visit suggestion", overview: "Service overview", photos: "Request for photos" }).map(([key, label]) => <Checkbox key={key} label={label} checked={include[key]} onCheckedChange={(checked) => setInclude({ ...include, [key]: Boolean(checked) })} />)}</AccordionSection></div>
-    <div className="mt-4"><label className="text-xs font-semibold text-slate-500">Subject<input className="mt-1 min-h-9 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:ring-2 focus:ring-blue-100" value={subject} onChange={(event) => setSubject(event.target.value)} /></label><label className="mt-3 block text-xs font-semibold text-slate-500">Message<Textarea className="mt-1 min-h-64" value={body} onChange={(event) => setBody(event.target.value)} placeholder="Generate a draft or write a follow-up." /></label></div>
-    <div className="mt-4 grid grid-cols-3 gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => generate.mutate()}><RefreshCw size={15} />Generate</Button><Button size="sm" variant="outline" disabled={busy || !body.trim()} onClick={() => save.mutate()}><FileCheck size={15} />Save</Button><Button size="sm" disabled={busy || !body.trim()} onClick={() => send.mutate()}><Send size={15} />Queue</Button></div>
-    {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
-    {(generate.error || save.error || send.error) && <div className="mt-3"><Notice tone="error">{String((generate.error || save.error || send.error).message)}</Notice></div>}
-  </>;
+  return <div className="-mx-4 -my-4 min-h-[calc(100dvh-136px)] bg-background">
+    <header className="border-b border-border bg-card px-4 pb-4 pt-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <span className="inline-flex min-h-6 items-center gap-1.5 rounded-md border border-brand/25 bg-brand-muted px-2 text-xs font-semibold text-brand-muted-foreground"><Sparkles size={13} />Response generator</span>
+          <h2 className="mt-3 text-2xl font-bold leading-tight text-foreground">Build a client follow-up</h2>
+          <p className="mt-1 truncate text-sm text-muted-foreground">{detail.inquiry.title}</p>
+        </div>
+        <Badge tone={body.trim() ? "green" : "amber"} className="shrink-0">{body.trim() ? "Draft ready" : "Needs draft"}</Badge>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <MiniMetric label="Missing" value={missingCount} />
+        <MiniMetric label="Files" value={fileCount} />
+        <MiniMetric label="Work" value={documentCount} />
+      </div>
+    </header>
+
+    <main className="px-4 pb-24 pt-4">
+      <section className="rounded-lg border border-border bg-card p-3 text-card-foreground shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-foreground">Response goal</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">Pick what this email should accomplish.</p>
+          </div>
+          <Badge tone="brand">{goalConfig.tone}</Badge>
+        </div>
+        <div className="mt-3 grid gap-2">
+          {responseGoals.map(({ value, label, description, icon: Icon }) => {
+            const active = goal === value;
+            return <button key={value} type="button" onClick={() => setGoal(value)} className={cn("grid min-h-[74px] grid-cols-[36px_minmax(0,1fr)] gap-3 rounded-lg border p-3 text-left transition-colors", active ? "border-brand/40 bg-brand-muted text-brand-muted-foreground shadow-sm" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground")}>
+              <span className={cn("grid size-9 place-items-center rounded-md", active ? "bg-brand text-brand-foreground" : "bg-muted text-muted-foreground")}><Icon size={19} /></span>
+              <span className="min-w-0">
+                <span className="block text-sm font-bold">{label}</span>
+                <span className={cn("mt-1 block text-xs leading-4", active ? "text-brand-muted-foreground/80" : "text-muted-foreground")}>{description}</span>
+              </span>
+            </button>;
+          })}
+        </div>
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm">
+        <div className="border-b border-border px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-bold text-foreground">Draft workspace</h3>
+            <span className="text-xs font-medium text-muted-foreground">{body.length.toLocaleString()} chars</span>
+          </div>
+        </div>
+        <div className="grid gap-3 p-4">
+          <Field label="Subject">
+            <input className="min-h-10 w-full rounded-lg border border-input bg-background px-3 text-sm font-semibold text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-brand focus:ring-2 focus:ring-ring/25" value={subject} onChange={(event) => setSubject(event.target.value)} />
+          </Field>
+          <Field label="Message">
+            <Textarea className="min-h-[320px] bg-background leading-6" value={body} onChange={(event) => setBody(event.target.value)} placeholder="Generate a polished response or write your own follow-up here." />
+          </Field>
+        </div>
+      </section>
+
+      {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
+      {(generate.error || save.error || send.error) && <div className="mt-3"><Notice tone="error">{String((generate.error || save.error || send.error).message)}</Notice></div>}
+
+      <div className="sticky bottom-0 z-10 -mx-4 mt-4 border-t border-border bg-background/95 px-4 py-3 shadow-[0_-12px_28px_rgba(15,23,42,0.08)] backdrop-blur">
+        <div className="grid grid-cols-[minmax(0,1fr)_44px_44px] gap-2">
+          <Button disabled={busy} onClick={() => generate.mutate()}><Sparkles size={16} />{generate.isPending ? "Generating..." : "Generate response"}</Button>
+          <Button size="icon" variant="outline" disabled={busy || !body.trim()} onClick={() => save.mutate()} aria-label="Save response draft" title="Save response draft"><FileCheck size={16} /></Button>
+          <Button size="icon" disabled={busy || !body.trim()} onClick={() => send.mutate()} aria-label="Queue response email" title="Queue response email"><Send size={16} /></Button>
+        </div>
+      </div>
+    </main>
+  </div>;
+}
+
+function MiniMetric({ label, value }) {
+  return <div className="rounded-lg border border-border bg-background px-3 py-2 text-center">
+    <strong className="block text-lg leading-5 text-foreground">{value}</strong>
+    <span className="mt-1 block text-[11px] font-semibold uppercase text-muted-foreground">{label}</span>
+  </div>;
 }
 
 export function ProposalScreen({ detail, notice, setNotice }) {

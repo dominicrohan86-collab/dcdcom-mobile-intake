@@ -1,50 +1,213 @@
 @import "tailwindcss";
 
+/* Enable class-based dark mode (toggled by adding `.dark` to <html>). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --color-brand: #5c9826;
-  --color-brand-50: #f3f8ef;
-  --color-brand-100: #e5f1dc;
-  --color-brand-200: #cee4bd;
-  --color-brand-300: #b7e6a8;
-  --color-brand-400: #96ce67;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius: 0.75rem;
+
+  /* Refined DCDecom green — keeps the signature lime (#7fc242) but adds depth. */
+  --color-brand-50: #f2f9e9;
+  --color-brand-100: #e2f2cd;
+  --color-brand-200: #c7e6a1;
+  --color-brand-300: #a8d76e;
+  --color-brand-400: #8ecb4a;
   --color-brand-500: #7fc242;
-  --color-brand-600: #5c9826;
-  --color-brand-700: #477a1d;
-  --color-brand-800: #385f1c;
-  --color-brand-900: #2e4e1a;
-  --color-brand-950: #172b0c;
+  --color-brand-600: #5f9e2a;
+  --color-brand-700: #4a7d22;
+  --color-brand-800: #3b621e;
+  --color-brand-900: #32521d;
+  --color-brand-950: #182b0c;
 
-  /* DCDecom brand green replaces the previous blue interaction scale. */
-  --color-blue-50: #f3f8ef;
-  --color-blue-100: #e5f1dc;
-  --color-blue-200: #cee4bd;
-  --color-blue-300: #b7e6a8;
-  --color-blue-400: #96ce67;
+  /* Keep the historical blue-* interaction scale mapped to brand for legacy usages. */
+  --color-blue-50: #f2f9e9;
+  --color-blue-100: #e2f2cd;
+  --color-blue-200: #c7e6a1;
+  --color-blue-300: #a8d76e;
+  --color-blue-400: #8ecb4a;
   --color-blue-500: #7fc242;
-  --color-blue-600: #5c9826;
-  --color-blue-700: #477a1d;
-  --color-blue-800: #385f1c;
-  --color-blue-900: #2e4e1a;
-  --color-blue-950: #172b0c;
+  --color-blue-600: #5f9e2a;
+  --color-blue-700: #4a7d22;
+  --color-blue-800: #3b621e;
+  --color-blue-900: #32521d;
+  --color-blue-950: #182b0c;
 
-  /* Neutral charcoal scale mirrors the industrial look of dcdecom.com. */
-  --color-slate-50: #fafafa;
-  --color-slate-100: #efefef;
-  --color-slate-200: #dededb;
-  --color-slate-300: #c7c7c2;
-  --color-slate-400: #93938d;
-  --color-slate-500: #666a6d;
-  --color-slate-600: #54595f;
-  --color-slate-700: #383b3e;
-  --color-slate-800: #27292b;
-  --color-slate-900: #191919;
-  --color-slate-950: #101010;
+  /* Industrial charcoal neutral scale (light-oriented). */
+  --color-slate-50: #f7f8f4;
+  --color-slate-100: #eef1e8;
+  --color-slate-200: #e2e6da;
+  --color-slate-300: #cbd0c1;
+  --color-slate-400: #98a08c;
+  --color-slate-500: #6c7362;
+  --color-slate-600: #545a4c;
+  --color-slate-700: #3b4034;
+  --color-slate-800: #262a20;
+  --color-slate-900: #171a12;
+  --color-slate-950: #0d0f09;
 }
 
-* { box-sizing: border-box; }
-html { color-scheme: light; }
-body { margin: 0; min-width: 320px; background: #efefef; color: #191919; font-family: var(--font-sans); }
-button, input, textarea { font: inherit; }
-button { cursor: pointer; }
-::-webkit-scrollbar { width: 0; height: 0; }
+/* Semantic tokens — the source of truth for surfaces, text, and brand. */
+:root {
+  --background: #f4f6f0;
+  --foreground: #14170f;
+  --card: #ffffff;
+  --card-foreground: #14170f;
+  --muted: #edf0e7;
+  --muted-foreground: #5e6656;
+  --surface: #f0f2ec;
+  --border: #e2e6da;
+  --border-strong: #d3d8c8;
+  --input: #d3d8c8;
+  --ring: #7fc242;
+  --popover: #ffffff;
+  --popover-foreground: #14170f;
+
+  --brand: #5f9e2a;
+  --brand-foreground: #ffffff;
+  --brand-strong: #4a7d22;
+  --brand-muted: #e2f2cd;
+  --brand-muted-foreground: #3b621e;
+
+  --shadow-color: 32 45 20;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0a0c07;
+  --foreground: #edf1e6;
+  --card: #14170f;
+  --card-foreground: #edf1e6;
+  --muted: #191d13;
+  --muted-foreground: #99a38d;
+  --surface: #101309;
+  --border: #262b1d;
+  --border-strong: #333a27;
+  --input: #333a27;
+  --ring: #7fc242;
+  --popover: #171b10;
+  --popover-foreground: #edf1e6;
+
+  --brand: #7fc242;
+  --brand-foreground: #0a0c07;
+  --brand-strong: #8ecb4a;
+  --brand-muted: #1d2a11;
+  --brand-muted-foreground: #a8d76e;
+
+  --shadow-color: 0 0 0;
+  color-scheme: dark;
+}
+
+/* Map semantic tokens to Tailwind color utilities (bg-background, text-foreground, etc.). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-muted: var(--brand-muted);
+  --color-brand-muted-foreground: var(--brand-muted-foreground);
+}
+
+* {
+  box-sizing: border-box;
+  border-color: var(--border);
+}
+
+html {
+  background: var(--background);
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Spaced-out industrial micro-label, echoing dcdecom.com's monospace headings. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thin, themed scrollbars instead of hiding them entirely. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--muted-foreground) 32%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--muted-foreground) 50%, transparent);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--brand) 30%, transparent);
+  color: var(--foreground);
+}
+
+@keyframes v0-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-up {
+  animation: v0-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up {
+    animation: none;
+  }
+}

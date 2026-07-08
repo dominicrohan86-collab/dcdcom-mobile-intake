@@ -1,5 +1,6 @@
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Activity, Archive, ArrowLeft, Bell, Bot, CalendarDays, ChevronRight, CircleHelp, Clock, Download, ExternalLink, Eye, FileImage, FileText, FolderOpen, Image, KeyRound, Link2, Mail, Paperclip, RefreshCw, Search, ServerCog, Share2, ShieldCheck, SlidersHorizontal, Trash2, UserRound } from "lucide-react";
 import { client } from "../lib/api";
 import { Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, Input, Notice, Select } from "../components/ui";
@@ -21,6 +22,7 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
   const inquiry = detail?.inquiry ? adaptInquiry(detail.inquiry) : null;
   const [selected, setSelected] = React.useState(null);
   const [filter, setFilter] = React.useState("all");
+  const [filterOpen, setFilterOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [notice, setNotice] = React.useState("");
   const [expandedSections, setExpandedSections] = React.useState(() => new Set());
@@ -29,6 +31,8 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
     ...files.map((file) => ({ kind: "file", group: fileGroup(file), id: file.id, title: file.file_name || "Uploaded file", subtitle: fileCategoryLabel(file.category), status: file.content_type, updatedAt: file.uploaded_at, inquiryTitle: inquiry?.title || "Selected inquiry", item: file }))
   ].sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0)), [documents, files, inquiry?.title]);
   const shown = assets.filter((asset) => matchesFilter(asset, filter)).filter((asset) => `${asset.title} ${asset.subtitle} ${asset.status || ""}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const filterOptions = React.useMemo(() => docFilters.map(([value, label, Icon]) => ({ value, label, Icon, count: assets.filter((asset) => matchesFilter(asset, value)).length })), [assets]);
+  const activeFilter = filterOptions.find((option) => option.value === filter) || filterOptions[0];
   const needsReview = shown.find(isReviewWorthyAsset);
   const grouped = {
     generated: shown.filter((asset) => asset.group === "generated"),
@@ -98,17 +102,42 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
   return <>
     <header>
       <h2 className="text-3xl font-bold">Docs</h2>
-      <label className="mt-3 grid gap-1 text-xs font-semibold text-slate-600">Inquiry<Select label="Choose inquiry for documents" value={selectedId} onValueChange={(id) => { selectInquiry(id); setNotice(""); setSelected(null); }} options={inquiryOptions} /></label>
+      <label className="mt-3 grid gap-1 text-xs font-semibold text-muted-foreground">Inquiry<Select label="Choose inquiry for documents" value={selectedId} onValueChange={(id) => { selectInquiry(id); setNotice(""); setSelected(null); }} options={inquiryOptions} /></label>
     </header>
 
-    <div className="mt-5 flex min-h-14 items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 shadow-sm focus-within:ring-2 focus-within:ring-blue-100">
-      <Search size={24} className="shrink-0 text-slate-400" />
-      <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search docs" className="min-w-0 flex-1 bg-transparent text-base outline-none" />
+    <div className="mt-5 grid grid-cols-[minmax(0,1fr)_44px] gap-2">
+      <label className="relative block">
+        <Search className="absolute left-3 top-3 text-muted-foreground" size={18} />
+        <Input className="h-11 pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search docs" />
+      </label>
+      <PopoverPrimitive.Root open={filterOpen} onOpenChange={setFilterOpen}>
+        <PopoverPrimitive.Trigger asChild>
+          <Button variant={filter === "all" ? "outline" : "default"} size="icon" className="relative size-11" aria-label="Filter docs" title="Filter docs">
+            <SlidersHorizontal size={19} />
+            {filter !== "all" && <span className="absolute right-1.5 top-1.5 size-2 rounded-full border-2 border-card bg-amber-400" />}
+          </Button>
+        </PopoverPrimitive.Trigger>
+        <PopoverPrimitive.Portal>
+          <PopoverPrimitive.Content align="end" sideOffset={8} className="z-[70] w-[min(320px,calc(100vw-32px))] rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl outline-none" aria-label="Document filters">
+            <div className="px-2 pb-2 pt-1"><h3 className="text-sm font-bold">Filter docs</h3><p className="mt-0.5 text-xs text-muted-foreground">Choose the type of documents to show.</p></div>
+            <div className="grid gap-1">
+              {filterOptions.map(({ value, label, Icon, count }) => {
+                const active = filter === value;
+                return <button key={value} type="button" aria-pressed={active} onClick={() => { setFilter(value); setFilterOpen(false); }} className={cn("grid min-h-11 grid-cols-[28px_1fr_auto] items-center gap-2 rounded-md px-2 text-left text-sm transition-colors", active ? "bg-brand-muted text-brand-muted-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+                  <span className={cn("grid size-6 place-items-center rounded-md", active ? "bg-brand text-brand-foreground" : "bg-muted text-muted-foreground")}><Icon size={17} strokeWidth={1.8} /></span>
+                  <span className="font-medium">{label}</span>
+                  <span className="min-w-7 rounded bg-muted px-1.5 py-0.5 text-center text-xs font-semibold text-muted-foreground">{count}</span>
+                </button>;
+              })}
+            </div>
+            <PopoverPrimitive.Arrow className="fill-popover" />
+          </PopoverPrimitive.Content>
+        </PopoverPrimitive.Portal>
+      </PopoverPrimitive.Root>
     </div>
 
-    <div className="mt-5 grid grid-cols-6 gap-2 border-b border-slate-200 pb-4">
-        {docFilters.map(([value, label, Icon]) => <button key={value} type="button" onClick={() => setFilter(value)} className={cn("grid min-h-[72px] min-w-0 place-items-center rounded-lg border border-transparent px-1 text-xs font-medium text-slate-700", filter === value && "border-blue-600 bg-blue-50 text-blue-700")}><Icon size={26} strokeWidth={1.8} /><span className="mt-1 w-full truncate text-center">{label}</span></button>)}
-    </div>
+    {filter !== "all" && <div className="mt-3 flex items-center gap-2 border-b border-border pb-4"><span className="text-xs font-medium text-muted-foreground">Filtered by</span><button type="button" onClick={() => setFilter("all")} className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-brand-muted px-3 text-xs font-semibold text-brand-muted-foreground hover:brightness-95">{activeFilter.label} <span aria-hidden="true">x</span><span className="sr-only">Clear document filter</span></button></div>}
+    {filter === "all" && <div className="mt-5 border-b border-border" />}
 
     {needsReview && <FeaturedDocument asset={needsReview} open={() => openAsset(needsReview)} />}
     {!shown.length && <div className="mt-5"><EmptyState>{assets.length ? "No documents match that filter." : "No documents or files are linked yet."}</EmptyState></div>}
@@ -170,15 +199,15 @@ function DocumentViewer({ asset, inquiry, navigate, back, notice, setNotice }) {
     }
   }
 
-  return <div ref={viewerRef} className="-mx-4 -mb-4 -mt-4 min-h-[calc(100dvh-136px)] bg-slate-100">
-    <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-4 py-3">
+  return <div ref={viewerRef} className="-mx-4 -mb-4 -mt-5 min-h-[calc(100dvh-136px)] bg-background lg:-mx-8">
+    <div className="sticky -top-5 z-30 border-b border-border bg-background px-4 py-3 shadow-sm">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" aria-label="Back to Docs" onClick={back}><ArrowLeft size={20} /></Button>
-        <div className="min-w-0 flex-1"><h2 className="truncate text-base font-bold text-slate-950">{asset.title}</h2><p className="truncate text-xs text-slate-500">{inquiry?.title || "Selected inquiry"} · {details}</p></div>
-        {file ? <a href={downloadUrl} download={file.file_name || asset.title} aria-label="Download document" onClick={() => setNotice("Download started.")} className="grid size-9 place-items-center rounded-md text-blue-700 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><Download size={19} /></a> : <Button variant="ghost" size="icon" aria-label="Download document" onClick={download}><Download size={19} /></Button>}
+        <div className="min-w-0 flex-1"><h2 className="truncate text-base font-bold text-foreground">{asset.title}</h2><p className="truncate text-xs text-muted-foreground">{inquiry?.title || "Selected inquiry"} · {details}</p></div>
+        {file ? <a href={downloadUrl} download={file.file_name || asset.title} aria-label="Download document" onClick={() => setNotice("Download started.")} className="grid size-9 place-items-center rounded-md text-brand-muted-foreground hover:bg-brand-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"><Download size={19} /></a> : <Button variant="ghost" size="icon" aria-label="Download document" onClick={download}><Download size={19} /></Button>}
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
-        {file ? <a href={downloadUrl} download={file.file_name || asset.title} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white"><Download size={16} />Download</a> : <Button onClick={download}><Download size={16} />Download</Button>}
+        {file ? <a href={downloadUrl} download={file.file_name || asset.title} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-brand-foreground"><Download size={16} />Download</a> : <Button onClick={download}><Download size={16} />Download</Button>}
         <Button variant="outline" onClick={() => navigate("detail")}><ExternalLink size={16} />Inquiry</Button>
         <Button variant="outline" onClick={share} disabled={shareMutation.isPending}><Share2 size={16} />{shareMutation.isPending ? "Signing..." : "Share"}</Button>
       </div>
@@ -187,26 +216,26 @@ function DocumentViewer({ asset, inquiry, navigate, back, notice, setNotice }) {
 
     <div className="px-4 pb-4 pt-6">
       {document && <GeneratedDocumentPreview document={document} inquiry={inquiry} />}
-      {file && isImage(file) && <div className="overflow-hidden rounded-lg border border-slate-200 bg-white"><img src={downloadUrl} alt={file.file_name} className="max-h-[68vh] w-full object-contain" /></div>}
-      {file && isPdf(file) && <iframe title={file.file_name} src={downloadUrl} className="h-[68vh] w-full rounded-lg border border-slate-200 bg-white" />}
-      {file && isTextFile(file) && <iframe title={file.file_name} src={downloadUrl} className="h-[68vh] w-full rounded-lg border border-slate-200 bg-white" />}
-      {file && !canPreviewFile && <div className="rounded-lg border border-slate-200 bg-white p-6 text-center"><FileText size={36} className="mx-auto text-slate-400" /><h3 className="mt-3 text-base font-bold">Preview is not available</h3><p className="mt-1 text-sm leading-5 text-slate-500">Download this file to view it in the right application.</p><a href={downloadUrl} download={file.file_name || asset.title} className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white"><Download size={17} />Download file</a></div>}
+      {file && isImage(file) && <div className="overflow-hidden rounded-lg border border-border bg-card"><img src={downloadUrl} alt={file.file_name} className="max-h-[68vh] w-full object-contain" /></div>}
+      {file && isPdf(file) && <iframe title={file.file_name} src={downloadUrl} className="h-[68vh] w-full rounded-lg border border-border bg-card" />}
+      {file && isTextFile(file) && <iframe title={file.file_name} src={downloadUrl} className="h-[68vh] w-full rounded-lg border border-border bg-card" />}
+      {file && !canPreviewFile && <div className="rounded-lg border border-border bg-card p-6 text-center text-card-foreground"><FileText size={36} className="mx-auto text-muted-foreground" /><h3 className="mt-3 text-base font-bold">Preview is not available</h3><p className="mt-1 text-sm leading-5 text-muted-foreground">Download this file to view it in the right application.</p><a href={downloadUrl} download={file.file_name || asset.title} className="mt-4 inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-semibold text-brand-foreground"><Download size={17} />Download file</a></div>}
     </div>
   </div>;
 }
 
 function FeaturedDocument({ asset, open }) {
-  return <section className="mt-5 rounded-lg border border-amber-200 bg-amber-50/45 shadow-sm">
+  return <section className="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 shadow-sm">
     <div className="flex items-center justify-between gap-3 border-l-4 border-amber-500 px-4 py-3">
-      <span className="inline-flex items-center gap-2 text-sm font-semibold text-amber-700"><span className="size-3 rounded-full bg-amber-500" />Needs review</span>
+      <span className="inline-flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber-300"><span className="size-3 rounded-full bg-amber-500" />Needs review</span>
       <Badge tone="amber">Due today</Badge>
     </div>
     <div className="grid grid-cols-[72px_minmax(0,1fr)_44px] items-center gap-3 px-4 pb-4">
       <DocumentIcon asset={asset} large />
       <div className="min-w-0">
-        <h3 className="truncate text-lg font-bold leading-6 text-slate-950">{asset.title}</h3>
-        <p className="mt-1 truncate text-sm text-slate-600">{asset.inquiryTitle}</p>
-        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"><CalendarDays size={14} />{formatDate(asset.updatedAt)}<span>|</span><span>{assetMeta(asset)}</span></p>
+        <h3 className="truncate text-lg font-bold leading-6 text-foreground">{asset.title}</h3>
+        <p className="mt-1 truncate text-sm text-muted-foreground">{asset.inquiryTitle}</p>
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><CalendarDays size={14} />{formatDate(asset.updatedAt)}<span>|</span><span>{assetMeta(asset)}</span></p>
       </div>
       <Button variant="outline" size="icon" aria-label={`View ${asset.title}`} onClick={open}><Eye size={18} /></Button>
     </div>
@@ -218,22 +247,22 @@ function DocumentSection({ title, emptyText, assets, expanded = false, openAsset
   const visibleAssets = expanded ? assets : assets.slice(0, 5);
   return <section className="mt-6">
     <div className="mb-3 flex items-center justify-between gap-3">
-      <h3 className="text-xl font-bold text-slate-950">{title}</h3>
-      {hasMore && <button type="button" onClick={toggleExpanded} className="text-sm font-semibold text-blue-700">{expanded ? "Show less" : `View all ${assets.length}`}</button>}
+      <h3 className="text-xl font-bold text-foreground">{title}</h3>
+      {hasMore && <button type="button" onClick={toggleExpanded} className="text-sm font-semibold text-brand-muted-foreground">{expanded ? "Show less" : `View all ${assets.length}`}</button>}
     </div>
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      {visibleAssets.length ? visibleAssets.map((asset) => <DocumentRow key={`${asset.kind}-${asset.id}`} asset={asset} open={() => openAsset(asset)} />) : <p className="px-4 py-4 text-sm text-slate-500">{emptyText}</p>}
+    <div className="overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm">
+      {visibleAssets.length ? visibleAssets.map((asset) => <DocumentRow key={`${asset.kind}-${asset.id}`} asset={asset} open={() => openAsset(asset)} />) : <p className="px-4 py-4 text-sm text-muted-foreground">{emptyText}</p>}
     </div>
   </section>;
 }
 
 function DocumentRow({ asset, open }) {
-  return <div className="grid min-h-[82px] grid-cols-[50px_minmax(0,1fr)_40px] items-center gap-3 border-b border-slate-100 px-3 py-3 last:border-b-0">
+  return <div className="grid min-h-[82px] grid-cols-[50px_minmax(0,1fr)_40px] items-center gap-3 border-b border-border px-3 py-3 last:border-b-0">
     <DocumentIcon asset={asset} />
     <div className="min-w-0">
-      <h4 className="truncate text-sm font-bold text-slate-950">{asset.title}</h4>
-      <p className="mt-0.5 truncate text-sm text-slate-600">{asset.inquiryTitle}</p>
-      <p className="mt-1 truncate text-xs text-slate-500">{formatDate(asset.updatedAt)} <span className="px-1">|</span> {assetMeta(asset)}</p>
+      <h4 className="truncate text-sm font-bold text-card-foreground">{asset.title}</h4>
+      <p className="mt-0.5 truncate text-sm text-muted-foreground">{asset.inquiryTitle}</p>
+      <p className="mt-1 truncate text-xs text-muted-foreground">{formatDate(asset.updatedAt)} <span className="px-1">|</span> {assetMeta(asset)}</p>
     </div>
     <Button variant="outline" size="icon" aria-label={`View ${asset.title}`} onClick={open}><Eye size={18} /></Button>
   </div>;
@@ -245,9 +274,9 @@ function DocumentIcon({ asset, large = false }) {
   const isPdfLike = label === "PDF" || asset.item?.document_type === "proposal" || asset.item?.document_type === "scope_of_work";
   const isPhotoLike = asset.kind === "file" && isImage(asset.item);
   const thumb = asset.kind === "file" ? thumbnailUrl(asset.item) : null;
-  return <span className={cn("relative grid shrink-0 place-items-center rounded-md border bg-white", large ? "size-[66px]" : "size-11", isPhotoLike ? "border-blue-200 text-blue-700" : isPdfLike ? "border-red-200 text-red-600" : "border-blue-200 text-blue-700")}>
+  return <span className={cn("relative grid shrink-0 place-items-center rounded-md border bg-card", large ? "size-[66px]" : "size-11", isPhotoLike ? "border-brand/25 text-brand-muted-foreground" : isPdfLike ? "border-red-500/30 text-red-600 dark:text-red-300" : "border-brand/25 text-brand-muted-foreground")}>
     {thumb ? <img src={thumb} alt="" className="size-full rounded-md object-cover" /> : <Icon size={large ? 34 : 25} strokeWidth={1.7} />}
-    {!isPhotoLike && <span className={cn("absolute rounded-sm px-1 font-bold uppercase text-white", large ? "bottom-3 text-[13px]" : "bottom-2 text-[10px]", isPdfLike ? "bg-red-600" : "bg-blue-600")}>{label.slice(0, 4)}</span>}
+    {!isPhotoLike && <span className={cn("absolute rounded-sm px-1 font-bold uppercase text-white", large ? "bottom-3 text-[13px]" : "bottom-2 text-[10px]", isPdfLike ? "bg-red-600" : "bg-brand")}>{label.slice(0, 4)}</span>}
   </span>;
 }
 
@@ -258,39 +287,39 @@ function GeneratedDocumentPreview({ document, inquiry }) {
   const previousVersion = versions.find((version) => Number(version.version) === Number(document.current_version) - 1) || versions[1] || null;
   const sourceDocuments = metadata.generationContext?.sourceDocuments || metadata.generation_context?.source_documents || [];
   const comparison = versionComparison(currentVersion?.body || document.body || "", previousVersion?.body || "");
-  return <article className="mx-auto max-w-[720px] rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-    <p className="text-xs font-bold uppercase text-blue-700">DCDecom</p>
-    <h1 className="mt-2 text-xl font-bold leading-tight text-slate-950">{document.title}</h1>
-    <div className="mt-3 grid gap-1 border-y border-slate-200 py-3 text-xs text-slate-500">
+  return <article className="mx-auto max-w-[720px] rounded-lg border border-border bg-card p-5 text-card-foreground shadow-sm">
+    <p className="text-xs font-bold uppercase text-brand-muted-foreground">DCDecom</p>
+    <h1 className="mt-2 text-xl font-bold leading-tight text-card-foreground">{document.title}</h1>
+    <div className="mt-3 grid gap-1 border-y border-border py-3 text-xs text-muted-foreground">
       <span>{inquiry?.title || "Inquiry document"}</span>
       <span>{documentTypeLabel(document.document_type)} · Version {document.current_version || 1} · {document.status || "draft"}</span>
       {document.subject && <span>Subject: {document.subject}</span>}
     </div>
-    <div className="mt-4 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+    <div className="mt-4 grid gap-3 rounded-md border border-border bg-muted/50 p-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <ReviewMetric label="Review status" value={document.status === "review" ? "Needs approval" : document.status || "Draft"} tone={document.status === "review" ? "amber" : "green"} />
         <ReviewMetric label="AI confidence" value={metadata.confidenceScore ? `${metadata.confidenceScore}%` : "Not scored"} tone="slate" />
         <ReviewMetric label="Prompt version" value={metadata.promptVersionId || metadata.prompt_version_id || "Not recorded"} tone="blue" />
       </div>
       <section>
-        <h2 className="text-sm font-bold text-slate-950">Source references</h2>
-        {sourceDocuments.length ? <div className="mt-2 grid gap-1">{sourceDocuments.slice(0, 4).map((source) => <p key={source.id || source.fileName} className="truncate rounded bg-white px-2 py-1.5 text-xs text-slate-600">{source.fileName || source.file_name || "Source document"} · {source.category || source.contentType || "file"}</p>)}</div> : <p className="mt-1 text-xs text-slate-500">No source documents were recorded for this version.</p>}
+        <h2 className="text-sm font-bold text-foreground">Source references</h2>
+        {sourceDocuments.length ? <div className="mt-2 grid gap-1">{sourceDocuments.slice(0, 4).map((source) => <p key={source.id || source.fileName} className="truncate rounded bg-card px-2 py-1.5 text-xs text-muted-foreground">{source.fileName || source.file_name || "Source document"} · {source.category || source.contentType || "file"}</p>)}</div> : <p className="mt-1 text-xs text-muted-foreground">No source documents were recorded for this version.</p>}
       </section>
       <section>
-        <h2 className="text-sm font-bold text-slate-950">Version history</h2>
-        {versions.length ? <div className="mt-2 grid gap-1">{versions.slice(0, 4).map((version) => <p key={version.id} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5 text-xs text-slate-600"><span>Version {version.version}{version.generated_by_ai ? " · AI generated" : " · Edited"}</span><span className="shrink-0">{formatDate(version.created_at)}</span></p>)}</div> : <p className="mt-1 text-xs text-slate-500">Only the current version is available.</p>}
+        <h2 className="text-sm font-bold text-foreground">Version history</h2>
+        {versions.length ? <div className="mt-2 grid gap-1">{versions.slice(0, 4).map((version) => <p key={version.id} className="flex items-center justify-between gap-2 rounded bg-card px-2 py-1.5 text-xs text-muted-foreground"><span>Version {version.version}{version.generated_by_ai ? " · AI generated" : " · Edited"}</span><span className="shrink-0">{formatDate(version.created_at)}</span></p>)}</div> : <p className="mt-1 text-xs text-muted-foreground">Only the current version is available.</p>}
       </section>
       <section>
-        <h2 className="text-sm font-bold text-slate-950">Version comparison</h2>
-        <p className="mt-1 text-xs leading-5 text-slate-600">{previousVersion ? `${comparison.wordDelta >= 0 ? "+" : ""}${comparison.wordDelta} words since version ${previousVersion.version}; ${comparison.changedParagraphs} paragraphs changed.` : "No previous version to compare yet."}</p>
+        <h2 className="text-sm font-bold text-foreground">Version comparison</h2>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{previousVersion ? `${comparison.wordDelta >= 0 ? "+" : ""}${comparison.wordDelta} words since version ${previousVersion.version}; ${comparison.changedParagraphs} paragraphs changed.` : "No previous version to compare yet."}</p>
       </section>
     </div>
-    <div className="mt-5 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{document.body || "This document does not have any body content yet."}</div>
+    <div className="mt-5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground/90">{document.body || "This document does not have any body content yet."}</div>
   </article>;
 }
 
 function ReviewMetric({ label, value, tone }) {
-  return <div className="rounded bg-white p-2"><p className="text-[11px] font-bold uppercase text-slate-500">{label}</p><Badge tone={tone} className="mt-1">{value}</Badge></div>;
+  return <div className="rounded bg-card p-2"><p className="text-[11px] font-bold uppercase text-muted-foreground">{label}</p><Badge tone={tone} className="mt-1">{value}</Badge></div>;
 }
 
 function matchesFilter(asset, filter) {
@@ -405,52 +434,52 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
   const recentItems = personalization?.recentItems || personalization?.recent_items || [];
   return <>
     <h2 className="text-3xl font-bold">More</h2>
-    <div className="mt-3 rounded-md border border-brand-200 bg-brand-50 p-3 text-sm text-brand-900"><b>{user?.fullName || "Your workspace"}</b><span className="mt-1 block text-xs text-brand-800">{savedViewCount} saved views · {rules.timezone} · {roleLabel(user?.role)}</span></div>
+    <div className="mt-3 rounded-md border border-brand/25 bg-brand-muted p-3 text-sm text-brand-muted-foreground"><b>{user?.fullName || "Your workspace"}</b><span className="mt-1 block text-xs opacity-85">{savedViewCount} saved views · {rules.timezone} · {roleLabel(user?.role)}</span></div>
     <section className="mt-4">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-bold text-slate-950">Recent work</h3>
-        <span className="text-xs font-semibold text-slate-500">{recentItems.length} items</span>
+        <h3 className="text-sm font-bold text-foreground">Recent work</h3>
+        <span className="text-xs font-semibold text-muted-foreground">{recentItems.length} items</span>
       </div>
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-md border border-border bg-card shadow-sm">
         {recentItems.length ? recentItems.slice(0, 4).map((item) => {
           const metadata = recentMetadata(item);
-          return <div key={`${item.entity_type || item.entityType}-${item.entity_id || item.entityId}`} className="grid min-h-[68px] grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-slate-100 px-3 py-3 last:border-b-0">
-            <span className="grid size-8 place-items-center rounded-md bg-blue-50 text-blue-700"><Clock size={17} /></span>
+          return <div key={`${item.entity_type || item.entityType}-${item.entity_id || item.entityId}`} className="grid min-h-[68px] grid-cols-[34px_minmax(0,1fr)] items-center gap-3 border-b border-border px-3 py-3 last:border-b-0">
+            <span className="grid size-8 place-items-center rounded-md bg-brand-muted text-brand-muted-foreground"><Clock size={17} /></span>
             <div className="min-w-0">
-              <b className="block truncate text-sm text-slate-950">{metadata.title || item.entity_id || item.entityId}</b>
-              <p className="mt-0.5 truncate text-xs text-slate-500">{[metadata.companyName, statusLabel(metadata.status), formatDate(item.last_viewed_at || item.lastViewedAt)].filter(Boolean).join(" · ")}</p>
+              <b className="block truncate text-sm text-foreground">{metadata.title || item.entity_id || item.entityId}</b>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{[metadata.companyName, statusLabel(metadata.status), formatDate(item.last_viewed_at || item.lastViewedAt)].filter(Boolean).join(" · ")}</p>
             </div>
           </div>;
-        }) : <p className="px-3 py-4 text-sm text-slate-500">Open an inquiry to build your recent workspace.</p>}
+        }) : <p className="px-3 py-4 text-sm text-muted-foreground">Open an inquiry to build your recent workspace.</p>}
       </div>
     </section>
-    <div className="mt-4 divide-y divide-slate-100 border-y border-slate-200"><Menu icon={UserRound} label="Account" action={() => setDialog("account")} /><Menu icon={ShieldCheck} label="Security" action={() => setDialog("security")} /><Menu icon={SlidersHorizontal} label="Saved views" action={() => setDialog("views")} />{user?.role && ["admin", "project_manager"].includes(user.role) && <Menu icon={KeyRound} label="Admin users" action={() => setDialog("admin")} />}{user?.role === "admin" && <Menu icon={Activity} label="Audit history" action={() => setDialog("audit")} />}{user?.role === "admin" && <Menu icon={Archive} label="File retention" action={() => setDialog("retention")} />}{user?.role === "admin" && <Menu icon={Bot} label="AI prompt registry" action={() => setDialog("ai-prompts")} />}{user?.role === "admin" && <Menu icon={ServerCog} label="System health" action={() => setDialog("health")} />}<Menu icon={Bell} label="Preferences" action={() => setDialog("notifications")} /><Menu icon={Link2} label="Integrations" action={() => setDialog("integrations")} /><Menu icon={CircleHelp} label="Help" action={() => setDialog("help")} /><Menu icon={RefreshCw} label="Sync selected inquiry" action={() => sync.mutate()} /></div>
+    <div className="mt-4 divide-y divide-border border-y border-border"><Menu icon={UserRound} label="Account" action={() => setDialog("account")} /><Menu icon={ShieldCheck} label="Security" action={() => setDialog("security")} /><Menu icon={SlidersHorizontal} label="Saved views" action={() => setDialog("views")} />{user?.role && ["admin", "project_manager"].includes(user.role) && <Menu icon={KeyRound} label="Admin users" action={() => setDialog("admin")} />}{user?.role === "admin" && <Menu icon={Activity} label="Audit history" action={() => setDialog("audit")} />}{user?.role === "admin" && <Menu icon={Archive} label="File retention" action={() => setDialog("retention")} />}{user?.role === "admin" && <Menu icon={Bot} label="AI prompt registry" action={() => setDialog("ai-prompts")} />}{user?.role === "admin" && <Menu icon={ServerCog} label="System health" action={() => setDialog("health")} />}<Menu icon={Bell} label="Preferences" action={() => setDialog("notifications")} /><Menu icon={Link2} label="Integrations" action={() => setDialog("integrations")} /><Menu icon={CircleHelp} label="Help" action={() => setDialog("help")} /><Menu icon={RefreshCw} label="Sync selected inquiry" action={() => sync.mutate()} /></div>
     {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
     <Dialog open={dialog === "account"} onOpenChange={(open) => !open && setDialog(null)} title="Account"><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); profile.mutate(); }}><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Email"><Input value={user?.email || ""} readOnly /></Field><Button type="submit">Save profile</Button></form></Dialog>
     <Dialog open={dialog === "security"} onOpenChange={(open) => !open && setDialog(null)} title="Security"><div className="grid gap-4">
-      <form className="grid gap-3 rounded-md border border-slate-200 p-3" onSubmit={(event) => { event.preventDefault(); changePassword.mutate(); }}>
+      <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); changePassword.mutate(); }}>
         <b className="text-sm">Change password</b>
         <Field label="Current password"><Input type="password" value={passwords.currentPassword} onChange={(event) => setPasswords({ ...passwords, currentPassword: event.target.value })} /></Field>
         <Field label="New password"><Input type="password" value={passwords.newPassword} onChange={(event) => setPasswords({ ...passwords, newPassword: event.target.value })} /></Field>
         <Button type="submit" disabled={changePassword.isPending || passwords.newPassword.length < 10}>Update password</Button>
         {changePassword.error && <Notice tone="error">{changePassword.error.message}</Notice>}
       </form>
-      <Card className="p-3"><div className="flex items-start gap-3"><ShieldCheck size={19} className="mt-0.5 text-brand-700" /><div><b className="text-sm">Google identity</b><p className="mt-1 text-sm leading-5 text-slate-600">Google Sign-In can be connected with OAuth credentials for this workspace.</p></div></div></Card>
-      <div><b className="text-sm">Active sessions</b><div className="mt-2 grid gap-2">{sessions.isLoading ? <p className="text-sm text-slate-500">Loading sessions...</p> : sessions.data?.sessions?.length ? sessions.data.sessions.map((session) => <Card key={session.id} className="flex items-center justify-between gap-3 p-3"><div><p className="text-sm font-semibold">{session.id}</p><p className="text-xs text-slate-500">Expires {formatDate(session.expiresAt)}</p></div><Button size="sm" variant="outline" onClick={() => revoke.mutate(session.id)} disabled={revoke.isPending}>Revoke</Button></Card>) : <p className="text-sm text-slate-500">No active sessions found.</p>}</div></div>
+      <Card className="p-3"><div className="flex items-start gap-3"><ShieldCheck size={19} className="mt-0.5 text-brand-700" /><div><b className="text-sm">Google identity</b><p className="mt-1 text-sm leading-5 text-muted-foreground">Google Sign-In can be connected with OAuth credentials for this workspace.</p></div></div></Card>
+      <div><b className="text-sm">Active sessions</b><div className="mt-2 grid gap-2">{sessions.isLoading ? <p className="text-sm text-muted-foreground">Loading sessions...</p> : sessions.data?.sessions?.length ? sessions.data.sessions.map((session) => <Card key={session.id} className="flex items-center justify-between gap-3 p-3"><div><p className="text-sm font-semibold">{session.id}</p><p className="text-xs text-muted-foreground">Expires {formatDate(session.expiresAt)}</p></div><Button size="sm" variant="outline" onClick={() => revoke.mutate(session.id)} disabled={revoke.isPending}>Revoke</Button></Card>) : <p className="text-sm text-muted-foreground">No active sessions found.</p>}</div></div>
     </div></Dialog>
     <Dialog open={dialog === "admin"} onOpenChange={(open) => !open && setDialog(null)} title="Admin Users"><div className="grid gap-4">
-      <form className="grid gap-3 rounded-md border border-slate-200 p-3" onSubmit={(event) => { event.preventDefault(); createInvite.mutate(); }}>
+      <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); createInvite.mutate(); }}>
         <b className="text-sm">Invite teammate</b>
         <Field label="Email"><Input type="email" value={invite.email} onChange={(event) => setInvite({ ...invite, email: event.target.value })} /></Field>
         <Field label="Role"><Select value={invite.role} onValueChange={(role) => setInvite({ ...invite, role })} options={[["estimator", "Estimator"], ["sales", "Sales"], ["project_manager", "Project manager"], ["admin", "Admin"]]} /></Field>
         <Button type="submit" disabled={createInvite.isPending || !invite.email}>Create invite</Button>
         {createInvite.error && <Notice tone="error">{createInvite.error.message}</Notice>}
       </form>
-      <div className="grid gap-2">{admin.isLoading ? <p className="text-sm text-slate-500">Loading users...</p> : (admin.data?.users || []).map((item) => <Card key={item.id} className="grid gap-3 p-3"><div><b className="text-sm">{item.fullName}</b><p className="text-xs text-slate-500">{item.email} · {roleLabel(item.role)} · {item.isActive ? "Active" : "Inactive"}</p></div><div className="grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { isActive: !item.isActive } })}>{item.isActive ? "Deactivate" : "Activate"}</Button><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { role: item.role === "admin" ? "estimator" : "admin" } })}>{item.role === "admin" ? "Make estimator" : "Make admin"}</Button></div></Card>)}</div>
-      {admin.data?.invites?.length > 0 && <div><b className="text-sm">Recent invites</b><div className="mt-2 grid gap-2">{admin.data.invites.map((item) => <Card key={item.id} className="p-3"><p className="text-sm font-semibold">{item.email}</p><p className="text-xs text-slate-500">{roleLabel(item.role)} · {item.acceptedAt ? "Accepted" : item.revokedAt ? "Revoked" : "Pending"}</p></Card>)}</div></div>}
+      <div className="grid gap-2">{admin.isLoading ? <p className="text-sm text-muted-foreground">Loading users...</p> : (admin.data?.users || []).map((item) => <Card key={item.id} className="grid gap-3 p-3"><div><b className="text-sm">{item.fullName}</b><p className="text-xs text-muted-foreground">{item.email} · {roleLabel(item.role)} · {item.isActive ? "Active" : "Inactive"}</p></div><div className="grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { isActive: !item.isActive } })}>{item.isActive ? "Deactivate" : "Activate"}</Button><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { role: item.role === "admin" ? "estimator" : "admin" } })}>{item.role === "admin" ? "Make estimator" : "Make admin"}</Button></div></Card>)}</div>
+      {admin.data?.invites?.length > 0 && <div><b className="text-sm">Recent invites</b><div className="mt-2 grid gap-2">{admin.data.invites.map((item) => <Card key={item.id} className="p-3"><p className="text-sm font-semibold">{item.email}</p><p className="text-xs text-muted-foreground">{roleLabel(item.role)} · {item.acceptedAt ? "Accepted" : item.revokedAt ? "Revoked" : "Pending"}</p></Card>)}</div></div>}
     </div></Dialog>
     <Dialog open={dialog === "views"} onOpenChange={(open) => !open && setDialog(null)} title="Saved views"><div className="grid gap-4">
-      <form className="grid gap-3 rounded-md border border-slate-200 p-3" onSubmit={(event) => { event.preventDefault(); saveView.mutate(); }}>
+      <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); saveView.mutate(); }}>
         <b className="text-sm">Create saved view</b>
         <Field label="Name"><Input value={viewDraft.name} onChange={(event) => setViewDraft({ ...viewDraft, name: event.target.value })} placeholder="Operations review" /></Field>
         <Field label="Screen"><Select value={viewDraft.screen} onValueChange={(screen) => setViewDraft({ ...viewDraft, screen })} options={[["today", "Today"], ["inquiries", "Inquiries"], ["docs", "Docs"], ["composers", "Composers"], ["admin", "Admin"]]} /></Field>
@@ -458,51 +487,51 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
         <Button type="submit" disabled={saveView.isPending || !viewDraft.name.trim()}>Save view</Button>
         {saveView.error && <Notice tone="error">{saveView.error.message}</Notice>}
       </form>
-      <div className="grid gap-2">{(personalization?.savedViews || []).length ? personalization.savedViews.map((view) => <Card key={view.id} className="grid grid-cols-[minmax(0,1fr)_40px] items-center gap-3 p-3"><div className="min-w-0"><b className="truncate text-sm">{view.name}</b><p className="mt-1 text-xs text-slate-500">{screenLabel(view.screen)}{view.is_default || view.isDefault ? " · Default" : ""}</p></div><Button size="icon" variant="ghost" aria-label={`Delete ${view.name}`} onClick={() => deleteView.mutate(view.id)} disabled={deleteView.isPending}><Trash2 size={17} /></Button></Card>) : <p className="text-sm text-slate-500">No saved views yet.</p>}</div>
+      <div className="grid gap-2">{(personalization?.savedViews || []).length ? personalization.savedViews.map((view) => <Card key={view.id} className="grid grid-cols-[minmax(0,1fr)_40px] items-center gap-3 p-3"><div className="min-w-0"><b className="truncate text-sm">{view.name}</b><p className="mt-1 text-xs text-muted-foreground">{screenLabel(view.screen)}{view.is_default || view.isDefault ? " · Default" : ""}</p></div><Button size="icon" variant="ghost" aria-label={`Delete ${view.name}`} onClick={() => deleteView.mutate(view.id)} disabled={deleteView.isPending}><Trash2 size={17} /></Button></Card>) : <p className="text-sm text-muted-foreground">No saved views yet.</p>}</div>
     </div></Dialog>
-    <Dialog open={dialog === "audit"} onOpenChange={(open) => !open && setDialog(null)} title="Audit history"><div className="grid gap-2">{audit.isLoading ? <p className="text-sm text-slate-500">Loading audit history...</p> : audit.data?.events?.length ? audit.data.events.map((event) => <Card key={event.id} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{event.action}</b><p className="mt-1 text-xs text-slate-500">{event.entity_type} · {event.entity_id}</p></div><span className="shrink-0 text-xs text-slate-500">{formatDate(event.created_at)}</span></div></Card>) : <p className="text-sm text-slate-500">No audit events yet.</p>}{audit.error && <Notice tone="error">{audit.error.message}</Notice>}</div></Dialog>
+    <Dialog open={dialog === "audit"} onOpenChange={(open) => !open && setDialog(null)} title="Audit history"><div className="grid gap-2">{audit.isLoading ? <p className="text-sm text-muted-foreground">Loading audit history...</p> : audit.data?.events?.length ? audit.data.events.map((event) => <Card key={event.id} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{event.action}</b><p className="mt-1 text-xs text-muted-foreground">{event.entity_type} · {event.entity_id}</p></div><span className="shrink-0 text-xs text-muted-foreground">{formatDate(event.created_at)}</span></div></Card>) : <p className="text-sm text-muted-foreground">No audit events yet.</p>}{audit.error && <Notice tone="error">{audit.error.message}</Notice>}</div></Dialog>
     <Dialog open={dialog === "health"} onOpenChange={(open) => !open && setDialog(null)} title="System health"><div className="grid gap-3">
-      {readiness.isLoading ? <p className="text-sm text-slate-500">Checking system health...</p> : readiness.data ? <>
-        <Card className="p-3"><div className="flex items-center justify-between gap-3"><div><b className="text-sm">Readiness status</b><p className="mt-1 text-xs text-slate-500">Checked {formatDate(readiness.data.checkedAt)}</p></div><Badge tone={readiness.data.ready ? "green" : "red"}>{readiness.data.status}</Badge></div></Card>
-        <div className="grid gap-2">{(readiness.data.checks || []).map((check) => <Card key={check.key} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{checkLabel(check.key)}</b><p className="mt-1 text-xs leading-5 text-slate-500">{check.detail}</p></div><Badge tone={check.ok ? check.warningOnly ? "amber" : "green" : "red"}>{check.ok ? check.warningOnly ? "Warning" : "OK" : "Fail"}</Badge></div></Card>)}</div>
-        <section className="grid gap-2"><h3 className="text-sm font-bold text-slate-950">Provider queue</h3>{providerQueue.isLoading ? <p className="text-sm text-slate-500">Loading provider queue...</p> : providerQueue.data?.items?.length ? providerQueue.data.items.map((item) => <Card key={`${item.type}-${item.id}`} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{item.provider || item.display_name || "Provider"} · {item.operation}</b><p className="mt-1 truncate text-xs text-slate-500">{item.inquiry_title || item.external_id || item.communication_id || "Account operation"}</p>{item.error_message && <p className="mt-1 text-xs leading-5 text-red-700">{item.error_message}</p>}</div><Badge tone={providerQueueTone(item.status)}>{item.status}</Badge></div></Card>) : <p className="text-sm text-slate-500">No queued provider work.</p>}</section>
-      </> : <p className="text-sm text-slate-500">System health is unavailable.</p>}
+      {readiness.isLoading ? <p className="text-sm text-muted-foreground">Checking system health...</p> : readiness.data ? <>
+        <Card className="p-3"><div className="flex items-center justify-between gap-3"><div><b className="text-sm">Readiness status</b><p className="mt-1 text-xs text-muted-foreground">Checked {formatDate(readiness.data.checkedAt)}</p></div><Badge tone={readiness.data.ready ? "green" : "red"}>{readiness.data.status}</Badge></div></Card>
+        <div className="grid gap-2">{(readiness.data.checks || []).map((check) => <Card key={check.key} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{checkLabel(check.key)}</b><p className="mt-1 text-xs leading-5 text-muted-foreground">{check.detail}</p></div><Badge tone={check.ok ? check.warningOnly ? "amber" : "green" : "red"}>{check.ok ? check.warningOnly ? "Warning" : "OK" : "Fail"}</Badge></div></Card>)}</div>
+        <section className="grid gap-2"><h3 className="text-sm font-bold text-foreground">Provider queue</h3>{providerQueue.isLoading ? <p className="text-sm text-muted-foreground">Loading provider queue...</p> : providerQueue.data?.items?.length ? providerQueue.data.items.map((item) => <Card key={`${item.type}-${item.id}`} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{item.provider || item.display_name || "Provider"} · {item.operation}</b><p className="mt-1 truncate text-xs text-muted-foreground">{item.inquiry_title || item.external_id || item.communication_id || "Account operation"}</p>{item.error_message && <p className="mt-1 text-xs leading-5 text-red-700">{item.error_message}</p>}</div><Badge tone={providerQueueTone(item.status)}>{item.status}</Badge></div></Card>) : <p className="text-sm text-muted-foreground">No queued provider work.</p>}</section>
+      </> : <p className="text-sm text-muted-foreground">System health is unavailable.</p>}
       {(readiness.error || providerQueue.error) && <Notice tone="error">{(readiness.error || providerQueue.error).message}</Notice>}
     </div></Dialog>
     <Dialog open={dialog === "retention"} onOpenChange={(open) => !open && setDialog(null)} title="File retention"><div className="grid gap-4">
-      <Card className="p-3"><div className="flex items-start gap-3"><Archive size={19} className="mt-0.5 text-brand-700" /><div><b className="text-sm">Storage lifecycle</b><p className="mt-1 text-sm leading-5 text-slate-600">Files are retained by account policy, share links expire separately, and legal hold pauses cleanup.</p></div></div></Card>
+      <Card className="p-3"><div className="flex items-start gap-3"><Archive size={19} className="mt-0.5 text-brand-700" /><div><b className="text-sm">Storage lifecycle</b><p className="mt-1 text-sm leading-5 text-muted-foreground">Files are retained by account policy, share links expire separately, and legal hold pauses cleanup.</p></div></div></Card>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Archive after days"><Input type="number" min="1" value={retentionDraft.archiveAfterDays} onChange={(event) => setRetentionDraft({ ...retentionDraft, archiveAfterDays: Number(event.target.value || 0) })} /></Field>
         <Field label="Delete after days"><Input type="number" min="30" value={retentionDraft.retentionDays} onChange={(event) => setRetentionDraft({ ...retentionDraft, retentionDays: Number(event.target.value || 0) })} /></Field>
       </div>
       <Checkbox label="Legal hold" checked={retentionDraft.legalHold} onCheckedChange={(value) => setRetentionDraft({ ...retentionDraft, legalHold: Boolean(value) })} />
       <div className="grid grid-cols-2 gap-2"><Button variant="outline" disabled={previewRetention.isPending || retention.isLoading} onClick={() => previewRetention.mutate()}>{previewRetention.isPending ? "Checking..." : "Preview cleanup"}</Button><Button disabled={saveRetention.isPending} onClick={() => saveRetention.mutate()}>{saveRetention.isPending ? "Saving..." : "Save policy"}</Button></div>
-      {retention.data?.policy?.updated_at && <p className="text-xs text-slate-500">Last updated {formatDate(retention.data.policy.updated_at)}</p>}
-      {previewRetention.data && <section className="grid gap-2"><div className="flex items-center justify-between gap-3"><b className="text-sm">Cleanup preview</b><Badge tone={previewRetention.data.legalHold ? "amber" : previewRetention.data.candidateCount ? "red" : "green"}>{previewRetention.data.legalHold ? "Held" : `${previewRetention.data.candidateCount} files`}</Badge></div>{previewRetention.data.candidates?.length ? previewRetention.data.candidates.map((file) => <Card key={file.id} className="p-3"><b className="block truncate text-sm">{file.file_name}</b><p className="mt-1 truncate text-xs text-slate-500">{[file.company_name, file.inquiry_title, formatDate(file.uploaded_at)].filter(Boolean).join(" · ")}</p></Card>) : <p className="text-sm text-slate-500">{previewRetention.data.legalHold ? "Legal hold is active." : "No files are past retention."}</p>}</section>}
+      {retention.data?.policy?.updated_at && <p className="text-xs text-muted-foreground">Last updated {formatDate(retention.data.policy.updated_at)}</p>}
+      {previewRetention.data && <section className="grid gap-2"><div className="flex items-center justify-between gap-3"><b className="text-sm">Cleanup preview</b><Badge tone={previewRetention.data.legalHold ? "amber" : previewRetention.data.candidateCount ? "red" : "green"}>{previewRetention.data.legalHold ? "Held" : `${previewRetention.data.candidateCount} files`}</Badge></div>{previewRetention.data.candidates?.length ? previewRetention.data.candidates.map((file) => <Card key={file.id} className="p-3"><b className="block truncate text-sm">{file.file_name}</b><p className="mt-1 truncate text-xs text-muted-foreground">{[file.company_name, file.inquiry_title, formatDate(file.uploaded_at)].filter(Boolean).join(" · ")}</p></Card>) : <p className="text-sm text-muted-foreground">{previewRetention.data.legalHold ? "Legal hold is active." : "No files are past retention."}</p>}</section>}
       {(retention.error || saveRetention.error || previewRetention.error) && <Notice tone="error">{(retention.error || saveRetention.error || previewRetention.error).message}</Notice>}
     </div></Dialog>
     <Dialog open={dialog === "ai-prompts"} onOpenChange={(open) => !open && setDialog(null)} title="AI prompt registry"><div className="grid gap-3">
-      {aiPrompts.isLoading ? <p className="text-sm text-slate-500">Loading prompt registry...</p> : aiPrompts.data?.prompts?.length ? aiPrompts.data.prompts.map((prompt) => <Card key={prompt.id} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{prompt.id}</b><p className="mt-1 text-xs text-slate-500">{prompt.runType} · {prompt.schemaName} · {prompt.modelDefault}</p><p className="mt-2 text-sm leading-5 text-slate-600">{prompt.summary}</p><p className="mt-2 text-xs text-slate-500">Fallback: {prompt.fallback}</p></div><Badge tone={prompt.status === "active" ? "green" : "slate"}>{prompt.status}</Badge></div></Card>) : <p className="text-sm text-slate-500">No prompt versions registered.</p>}
+      {aiPrompts.isLoading ? <p className="text-sm text-muted-foreground">Loading prompt registry...</p> : aiPrompts.data?.prompts?.length ? aiPrompts.data.prompts.map((prompt) => <Card key={prompt.id} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{prompt.id}</b><p className="mt-1 text-xs text-muted-foreground">{prompt.runType} · {prompt.schemaName} · {prompt.modelDefault}</p><p className="mt-2 text-sm leading-5 text-muted-foreground">{prompt.summary}</p><p className="mt-2 text-xs text-muted-foreground">Fallback: {prompt.fallback}</p></div><Badge tone={prompt.status === "active" ? "green" : "slate"}>{prompt.status}</Badge></div></Card>) : <p className="text-sm text-muted-foreground">No prompt versions registered.</p>}
       {aiPrompts.error && <Notice tone="error">{aiPrompts.error.message}</Notice>}
     </div></Dialog>
     <Dialog open={dialog === "notifications"} onOpenChange={(open) => !open && setDialog(null)} title="Preferences"><div className="grid gap-3">
       <Field label="Default screen"><Select value={rules.defaultView} onValueChange={(defaultView) => setRules({ ...rules, defaultView })} options={[["today", "Today"], ["pipeline", "Inquiries"], ["docs", "Docs"], ["more", "More"]]} /></Field>
       <Field label="Timezone"><Select value={rules.timezone} onValueChange={(timezone) => setRules({ ...rules, timezone })} options={[["America/New_York", "Eastern"], ["America/Chicago", "Central"], ["America/Denver", "Mountain"], ["America/Los_Angeles", "Pacific"]]} /></Field>
       <Field label="Theme"><Select value={rules.theme} onValueChange={(theme) => setRules({ ...rules, theme })} options={[["system", "System"], ["light", "Light"], ["dark", "Dark"]]} /></Field>
-      <div className="grid gap-1 rounded-md border border-slate-200 p-3"><Checkbox label="High priority inquiry alerts" checked={rules.highPriorityAlerts} onCheckedChange={(value) => setRules({ ...rules, highPriorityAlerts: Boolean(value) })} /><Checkbox label="Lease deadline reminders" checked={rules.leaseDeadlineReminders} onCheckedChange={(value) => setRules({ ...rules, leaseDeadlineReminders: Boolean(value) })} /><Checkbox label="End-of-day digest" checked={rules.dailyDigest} onCheckedChange={(value) => setRules({ ...rules, dailyDigest: Boolean(value) })} /></div>
+      <div className="grid gap-1 rounded-md border border-border p-3"><Checkbox label="High priority inquiry alerts" checked={rules.highPriorityAlerts} onCheckedChange={(value) => setRules({ ...rules, highPriorityAlerts: Boolean(value) })} /><Checkbox label="Lease deadline reminders" checked={rules.leaseDeadlineReminders} onCheckedChange={(value) => setRules({ ...rules, leaseDeadlineReminders: Boolean(value) })} /><Checkbox label="End-of-day digest" checked={rules.dailyDigest} onCheckedChange={(value) => setRules({ ...rules, dailyDigest: Boolean(value) })} /></div>
       <Button className="mt-2" onClick={() => saveRules.mutate()} disabled={saveRules.isPending}>{saveRules.isPending ? "Saving..." : "Save preferences"}</Button>
     </div></Dialog>
-    <Dialog open={dialog === "integrations"} onOpenChange={(open) => !open && setDialog(null)} title="Integrations"><div className="grid gap-2">{["crm", "email", "calendar"].map((provider) => { const connected = integrations?.some((item) => item.provider === provider && item.status === "connected" && (provider !== "calendar" || item.display_name === "Google Calendar")); return <Card key={provider} className="flex items-center justify-between gap-3 p-3"><div><b className="capitalize">{provider === "calendar" ? "Google Calendar" : provider}</b><span className="block text-xs text-slate-500">{connected ? "Connected" : "Not connected"}</span></div><Button size="sm" variant={connected ? "outline" : "default"} onClick={() => connectProvider(provider)} disabled={connect.isPending}>{connected ? "Reconnect" : "Connect"}</Button></Card>; })}{connect.error && <Notice tone="error">{connect.error.message}</Notice>}</div></Dialog>
+    <Dialog open={dialog === "integrations"} onOpenChange={(open) => !open && setDialog(null)} title="Integrations"><div className="grid gap-2">{["crm", "email", "calendar"].map((provider) => { const connected = integrations?.some((item) => item.provider === provider && item.status === "connected" && (provider !== "calendar" || item.display_name === "Google Calendar")); return <Card key={provider} className="flex items-center justify-between gap-3 p-3"><div><b className="capitalize">{provider === "calendar" ? "Google Calendar" : provider}</b><span className="block text-xs text-muted-foreground">{connected ? "Connected" : "Not connected"}</span></div><Button size="sm" variant={connected ? "outline" : "default"} onClick={() => connectProvider(provider)} disabled={connect.isPending}>{connected ? "Reconnect" : "Connect"}</Button></Card>; })}{connect.error && <Notice tone="error">{connect.error.message}</Notice>}</div></Dialog>
     <Dialog open={dialog === "help"} onOpenChange={(open) => !open && setDialog(null)} title="Help & support"><div className="grid gap-3">
-      <Card className="p-3"><b className="text-sm">DCDcom operations support</b><p className="mt-1 text-sm leading-5 text-slate-600">support@dcdcom.com</p></Card>
-      <Card className="p-3"><b className="text-sm">Workspace context</b><p className="mt-1 text-sm leading-5 text-slate-600">{user?.email || "Signed-in user"} · {roleLabel(user?.role)} · {rules.timezone}</p></Card>
+      <Card className="p-3"><b className="text-sm">DCDcom operations support</b><p className="mt-1 text-sm leading-5 text-muted-foreground">support@dcdcom.com</p></Card>
+      <Card className="p-3"><b className="text-sm">Workspace context</b><p className="mt-1 text-sm leading-5 text-muted-foreground">{user?.email || "Signed-in user"} · {roleLabel(user?.role)} · {rules.timezone}</p></Card>
     </div></Dialog>
   </>;
 }
 
-function LibraryButton({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-14 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-left text-sm font-semibold hover:bg-slate-50"><Icon size={19} className="shrink-0 text-slate-500" />{label}</button>; }
+function LibraryButton({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-14 items-center gap-2 rounded-md border border-border bg-card px-3 text-left text-sm font-semibold hover:bg-muted/50"><Icon size={19} className="shrink-0 text-muted-foreground" />{label}</button>; }
 function Heading({ children }) { return <h3 className="mb-2 mt-5 text-lg font-bold">{children}</h3>; }
-function Menu({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-12 w-full items-center gap-3 px-1 text-left text-sm font-semibold hover:bg-slate-50"><Icon size={19} className="text-slate-500" /><span className="flex-1">{label}</span><ChevronRight size={17} className="text-slate-400" /></button>; }
+function Menu({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-12 w-full items-center gap-3 px-1 text-left text-sm font-semibold hover:bg-muted/50"><Icon size={19} className="text-muted-foreground" /><span className="flex-1">{label}</span><ChevronRight size={17} className="text-muted-foreground/70" /></button>; }
 function parseSettings(value) { try { return typeof value === "string" ? JSON.parse(value) : value || {}; } catch { return {}; } }
 function recentMetadata(item) { return parseSettings(item?.metadata || item?.metadata_json); }
 function roleLabel(role) { return String(role || "user").split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" "); }

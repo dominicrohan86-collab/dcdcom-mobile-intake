@@ -9,7 +9,7 @@ const intakeSchema = z.object({ notes: z.string().trim().min(20, "Add at least 2
 const channels = ["Call Notes", "Email", "Manual"];
 const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
 
-export function AddInquiryScreen({ analyze, create, busy, result, error, draftScope = "workspace:user" }) {
+export function AddInquiryScreen({ create, busy, result, error, draftScope = "workspace:user" }) {
   const draftKey = `dcdcom:${draftScope}:intake-draft`;
   const savedDraft = readDraft(draftKey);
   const [channel, setChannel] = React.useState(savedDraft.channel || "Call Notes");
@@ -38,10 +38,9 @@ export function AddInquiryScreen({ analyze, create, busy, result, error, draftSc
     <Tabs value={channel} onValueChange={setChannel} options={channels} />
     <form className="mt-4 grid gap-3" onSubmit={handleSubmit((values) => create({ ...payload(values), photos }))}>
       <Field label={channel === "Email" ? "Paste customer email" : "Customer notes"} error={errors.notes?.message}><Textarea {...register("notes")} placeholder="Paste or type the customer request, project location, timing, scope, and contact details." /></Field>
-      <div className="flex justify-between text-xs text-slate-500"><span>AI will structure the information before saving.</span><span>{notes.length}/40,000</span></div>
+      <div className="flex justify-between text-xs text-muted-foreground"><span>AI will structure the information into an inquiry.</span><span>{notes.length}/40,000</span></div>
       <PhotoPicker photos={photos} error={photoError} add={addPhotos} remove={(index) => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
-      <Button type="button" variant="outline" disabled={busy || notes.trim().length < 20} onClick={handleSubmit((values) => analyze(payload(values)))}><Sparkles size={17} />{busy ? "Analyzing..." : "Analyze details"}</Button>
-      <Button type="submit" disabled={busy || notes.trim().length < 20}>{busy ? "Saving..." : "Save inquiry"}</Button>
+      <Button type="submit" disabled={busy || notes.trim().length < 20}><Sparkles size={17} />{busy ? "Generating..." : "Generate inquiry"}</Button>
     </form>
     {result?.preview && <Card className="mt-4 p-3"><div className="mb-3 flex items-center justify-between"><h3 className="font-bold">Extraction preview</h3><Badge tone={result.preview.confidence > 80 ? "green" : "amber"}>{result.preview.confidence}% confidence</Badge></div><dl className="grid gap-2">{result.preview.rows.map((row) => <div key={row.label} className="grid grid-cols-[104px_minmax(0,1fr)] gap-2 border-t border-slate-100 pt-2 text-sm"><dt className="font-semibold text-slate-500">{row.label}</dt><dd className="min-w-0 break-words">{row.value}</dd></div>)}</dl></Card>}
     {error && <div className="mt-3"><Notice tone="error">{error}</Notice></div>}

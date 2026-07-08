@@ -131,7 +131,7 @@ export function App() {
       const photoMessage = result.failedPhotoCount
         ? ` ${result.uploadedPhotoCount} attached; ${result.failedPhotoCount} could not be uploaded.`
         : result.uploadedPhotoCount ? ` ${result.uploadedPhotoCount} ${result.uploadedPhotoCount === 1 ? "photo" : "photos"} attached.` : "";
-      setNotice(`Inquiry saved and added to the queue.${photoMessage}`);
+      setNotice(`Inquiry generated and added to the queue.${photoMessage}`);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["bootstrap"] }),
         queryClient.invalidateQueries({ queryKey: ["notifications"] })
@@ -206,8 +206,8 @@ export function App() {
   }
 
   if (signedOut || (bootstrap.error && isUnauthorized(bootstrap.error))) return <LoginScreen login={(payload) => login.mutate(payload)} signup={(payload) => signup.mutate(payload)} resetPassword={(payload) => resetPassword.mutate(payload)} acceptInvite={(payload) => acceptInvite.mutate(payload)} busy={login.isPending || signup.isPending || resetPassword.isPending || acceptInvite.isPending} error={login.error?.message || signup.error?.message || resetPassword.error?.message || acceptInvite.error?.message} />;
-  if (bootstrap.isLoading) return <main className="grid min-h-dvh place-items-center bg-slate-100 text-sm text-slate-500">Loading workspace...</main>;
-  if (bootstrap.error) return <main className="grid min-h-dvh place-items-center bg-slate-100 p-6"><Notice tone="error">Could not load the workspace: {bootstrap.error.message}</Notice></main>;
+  if (bootstrap.isLoading) return <main className="grid min-h-dvh place-items-center bg-background text-sm text-muted-foreground"><span className="flex items-center gap-2"><span className="size-4 animate-spin rounded-full border-2 border-border border-t-brand" />Loading workspace...</span></main>;
+  if (bootstrap.error) return <main className="grid min-h-dvh place-items-center bg-background p-6"><Notice tone="error">Could not load the workspace: {bootstrap.error.message}</Notice></main>;
 
   const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Documents" };
   const hasBack = ["add", "detail", "email", "proposal"].includes(screen);
@@ -215,7 +215,7 @@ export function App() {
 
   if (screen === "today") content = <TodayScreen openWorkflow={openWorkflow} />;
   else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} notice={notice} savedViews={bootstrap.data.personalization?.savedViews || []} />;
-  else if (screen === "add") content = <AddInquiryScreen analyze={(payload) => analyze.mutate(payload)} create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} draftScope={draftScope} />;
+  else if (screen === "add") content = <AddInquiryScreen create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} draftScope={draftScope} />;
   else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} selectedId={selectedId} notice={notice} setNotice={setNotice} />;
   else if (detail.isLoading || !detail.data) content = detail.error ? <EmptyState>Could not load this inquiry.</EmptyState> : <DetailLoading />;
   else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} user={bootstrap.data.user} navigate={go} openDocument={openDocument} notice={notice} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;

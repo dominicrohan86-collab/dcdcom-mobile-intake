@@ -110,6 +110,7 @@ export const assignmentSchema = z.object({ ownerUserId: z.string().trim().min(1)
 export const generateSchema = z.object({
   type: z.enum(["follow_up_email", "proposal", "scope_of_work", "site_checklist", "estimate"]),
   tone: z.string().max(40).default("Professional"),
+  responseGoal: z.enum(["info_request", "schedule_visit", "proposal_ready"]).optional(),
   sourceDocumentIds: z.array(z.string().max(120)).max(24).optional(),
   additionalContext: z.string().max(4000).default("")
 });

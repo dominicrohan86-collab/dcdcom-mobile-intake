@@ -4,10 +4,10 @@ import { useDropzone } from "react-dropzone";
 import { AlertTriangle, Bell, BellOff, CalendarDays, Check, CheckCircle2, ExternalLink, Eye, FileImage, FileText, Mail, MapPin, MessageSquare, Paperclip, Phone, Sparkles, Trash2, Upload, UserRound, X } from "lucide-react";
 import { client } from "../lib/api";
 import { AccordionSection, Badge, Button, Dialog, EmptyState, Field, Input, Notice, Select, Textarea } from "../components/ui";
-import { adaptInquiry, cn, communicationTones, priorityTones, requirementTones, stageLabels, stageTones } from "../lib/utils";
+import { adaptInquiry, cn, communicationTones, requirementTones, stageLabels, stageTones } from "../lib/utils";
 
 const requirementOptions = [["open", "Open"], ["requested", "Requested"], ["received", "Received"], ["waived", "Waived"]];
-const fileCategoryOptions = [["other", "General document"], ["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
+const fileCategoryOptions = [["other", "Document"], ["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Attachment"]];
 const primaryDetailFieldKeys = new Set(["company_name", "contact_name", "contact_email", "contact_phone"]);
 
 export function InquiryDetailScreen({ detail, user, navigate, openDocument: openSavedDocument, notice, setNotice, onDeleted }) {
@@ -85,38 +85,41 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
   const pageError = requirementMutation.error || uploadMutation.error || fileDeleteMutation.error || detailsMutation.error || ownerMutation.error || noteMutation.error || commentMutation.error || watchMutation.error || deleteMutation.error;
 
   return <>
-    <header className="-mx-4 -mt-4 bg-slate-950 px-4 pb-4 pt-4 text-white lg:-mx-8 lg:px-8">
+    <header className="-mx-4 -mt-4 border-b border-border bg-card px-4 pb-4 pt-4 text-card-foreground lg:-mx-8 lg:px-8">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
         <div className="min-w-0">
-          <h2 className="text-2xl font-bold leading-tight text-white">{item.title}</h2>
-          <div className="mt-2 flex max-w-full flex-wrap gap-2">
-            <Badge tone="cyan" className="border-white bg-slate-100 text-slate-950 shadow-sm">{item.service}</Badge>
+          <h2 className="text-2xl font-bold leading-tight text-foreground">{item.title}</h2>
+          <div className="mt-2 flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+            <span className="min-w-0 truncate font-semibold text-muted-foreground">{item.service}</span>
+            <span className="size-1 rounded-full bg-border-strong" aria-hidden="true" />
             <Badge tone={stageTones[item.status] || "slate"}>{stageLabels[item.status] || "New"}</Badge>
-            <Badge tone={priorityTones[item.priority] || "slate"}>{item.priorityLabel} priority / {item.workloadLabel} workload</Badge>
+            <span className={cn("inline-flex min-h-6 items-center gap-1 rounded-md border px-2 font-semibold", prioritySummaryClass(item.priority))}><AlertTriangle size={13} />{item.priorityLabel} / {item.workloadLabel}</span>
           </div>
         </div>
         <WatchersButton detail={detail} open={() => setWatchersOpen(true)} />
       </div>
 
-      <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
-        <div className="rounded-md border border-white/25 bg-white/10 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-          <a href={mapsUrl || undefined} target="_blank" rel="noreferrer" aria-label={fullAddress ? `Open ${fullAddress} in maps` : undefined} className={cn("flex min-w-0 items-start gap-2 rounded-md text-sm font-semibold leading-5 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-300", fullAddress ? "hover:text-brand-200" : "pointer-events-none text-slate-400")}>
-            <MapPin size={18} className="mt-0.5 shrink-0 text-brand-300" />
+      <div className="mt-4 rounded-lg border border-border bg-background/70 p-3">
+        <a href={mapsUrl || undefined} target="_blank" rel="noreferrer" aria-label={fullAddress ? `Open ${fullAddress} in maps` : undefined} className={cn("flex min-w-0 items-start gap-2 rounded-md text-sm font-semibold leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/70", fullAddress ? "hover:text-brand-muted-foreground" : "pointer-events-none text-muted-foreground")}>
+            <MapPin size={18} className="mt-0.5 shrink-0 text-brand-muted-foreground" />
             <span className="min-w-0 flex-1 break-words">{fullAddress || "Location pending"}</span>
-            {fullAddress && <ExternalLink size={15} className="mt-0.5 shrink-0 text-white" />}
+            {fullAddress && <ExternalLink size={15} className="mt-0.5 shrink-0 text-muted-foreground" />}
           </a>
-          <div className="mt-3 grid gap-2 text-xs text-slate-200 md:grid-cols-2">
-            <span className="flex min-w-0 items-center gap-1.5"><CalendarDays size={14} className="shrink-0" /><span className="truncate">Lease end: {capturedLease}</span></span>
-            {item.site_name && <span className="min-w-0 truncate md:text-left">Site: {item.site_name}</span>}
+        <div className="mt-3 grid gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-1.5"><CalendarDays size={14} className="shrink-0" /><span className="truncate">Lease end: {capturedLease}</span></span>
+          {item.site_name && <span className="min-w-0 truncate">Site: {item.site_name}</span>}
+          <div className="flex min-w-0 items-center gap-2">
+            <UserRound size={14} className="shrink-0" />
+            <span className="min-w-0 truncate"><span className="font-semibold text-foreground">{item.owner_name || "Unassigned"}</span>{item.owner_email ? ` · ${item.owner_email}` : ""}</span>
           </div>
         </div>
-        <OwnerPanel item={item} users={accountUsers.data?.users || []} canAssign={canAssignOwner} busy={ownerMutation.isPending || accountUsers.isLoading} updateOwner={(ownerId) => ownerMutation.mutate(ownerId)} surface="dark" />
+        {canAssignOwner && <div className="mt-3"><Select label="Assign inquiry owner" value={item.owner_user_id || "unassigned"} onValueChange={(value) => ownerMutation.mutate(value === "unassigned" ? null : value)} options={[["unassigned", "Unassigned"], ...(accountUsers.data?.users || []).filter((entry) => entry.isActive !== false).map((entry) => [entry.id, `${entry.fullName || entry.email} (${roleLabel(entry.role)})`])]} disabled={ownerMutation.isPending || accountUsers.isLoading} /></div>}
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Primary inquiry actions">
-        <QuickAction icon={Upload} label="Add docs" onClick={() => openUpload("other")} accent surface="dark" />
-        <QuickAction icon={Mail} label="Follow up" onClick={() => navigate("email")} surface="dark" />
-        <QuickAction icon={FileText} label="Generate" onClick={() => navigate("proposal")} surface="dark" />
+      <div className="mt-3 grid grid-cols-3 gap-2" aria-label="Primary inquiry actions">
+        <QuickAction icon={Upload} label="Add docs" onClick={() => openUpload("other")} accent />
+        <QuickAction icon={Mail} label="Follow up" onClick={() => navigate("email")} />
+        <QuickAction icon={FileText} label="Generate" onClick={() => navigate("proposal")} />
       </div>
     </header>
 
@@ -182,9 +185,9 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
 function WatchersButton({ detail, open }) {
   const watchers = detail.watchers || [];
   const count = Number(detail.watcher_count ?? watchers.length);
-  return <button type="button" onClick={open} aria-label={`${count} ${count === 1 ? "watcher" : "watchers"}`} className="relative grid size-11 shrink-0 place-items-center rounded-md border border-white/35 bg-white/15 text-white shadow-sm outline-none transition hover:border-white/50 hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-brand-300">
+  return <button type="button" onClick={open} aria-label={`${count} ${count === 1 ? "watcher" : "watchers"}`} className="relative grid size-11 shrink-0 place-items-center rounded-md border border-border bg-background text-muted-foreground shadow-sm outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70">
     <Eye size={20} />
-    <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full border border-slate-950 bg-brand-400 px-1 text-[11px] font-black leading-5 text-slate-950">{count}</span>
+    <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full border border-card bg-brand px-1 text-[11px] font-black leading-5 text-brand-foreground">{count}</span>
   </button>;
 }
 
@@ -261,7 +264,7 @@ function WorkflowGuidance({ item, missing, files, documents, communications, nav
     ["Floor plan", hasEvidence(sourceFiles, "floor_plan")],
     ["Equipment list", hasEvidence(sourceFiles, "equipment_list")],
     ["Contract", hasEvidence(sourceFiles, "contract")],
-    ["Email attachment", hasEvidence(sourceFiles, "email_attachment")]
+    ["Attachment", hasEvidence(sourceFiles, "email_attachment")]
   ];
   const openMissing = missing.filter((entry) => ["open", "requested"].includes(entry.status));
   const hasOutbound = communications.some((communication) => communication.direction === "outbound");
@@ -419,8 +422,8 @@ function UploadFiles({ busy, initialCategory = "other", submit }) {
       <Select value={documentCategory} onValueChange={setDocumentCategory} options={fileCategoryOptions} />
     </Field>
     <div className="grid grid-cols-2 gap-2">
-      <div {...photos.getRootProps()}><input {...photos.getInputProps({ "aria-label": "Choose photo files" })} /><Button type="button" variant="outline" className="w-full" onClick={photos.open}><FileImage size={17} />{documentCategory === "other" ? "Photos" : "Image"}</Button></div>
-      <div {...documents.getRootProps()}><input {...documents.getInputProps({ "aria-label": "Choose document files" })} /><Button type="button" variant="outline" className="w-full" onClick={documents.open}><FileText size={17} />{fileCategoryLabel(documentCategory)}</Button></div>
+      <div {...photos.getRootProps()}><input {...photos.getInputProps({ "aria-label": "Choose image files" })} /><Button type="button" variant="outline" className="w-full" onClick={photos.open}><FileImage size={17} />Image</Button></div>
+      <div {...documents.getRootProps()}><input {...documents.getInputProps({ "aria-label": "Choose document files" })} /><Button type="button" variant="outline" className="w-full" onClick={documents.open}><FileText size={17} />Document</Button></div>
     </div>
     <p className="mt-2 text-xs text-slate-500">Select multiple files at once. Maximum 12 MB per file.</p>
     {error && <div className="mt-3"><Notice tone="error">{error}</Notice></div>}
@@ -430,9 +433,16 @@ function UploadFiles({ busy, initialCategory = "other", submit }) {
 }
 
 function DetailRow({ label, value }) { return <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-2 border-b border-slate-100 pb-2 last:border-0"><dt className="font-medium text-slate-500">{label}</dt><dd className="min-w-0 break-words">{value || "Missing"}</dd></div>; }
+
+function prioritySummaryClass(priority) {
+  if (priority === "urgent" || priority === "high") return "border-amber-500/35 bg-amber-500/12 text-amber-700 dark:text-amber-300";
+  if (priority === "medium") return "border-brand/25 bg-brand-muted text-brand-muted-foreground";
+  return "border-border bg-muted text-muted-foreground";
+}
+
 function QuickAction({ icon: Icon, label, onClick, accent = false, surface = "light" }) {
   const dark = surface === "dark";
-  return <button type="button" onClick={onClick} className={cn("flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300", accent ? "bg-brand-500 text-slate-950 shadow-sm hover:bg-brand-400" : dark ? "border border-white/30 bg-white/15 text-white shadow-sm hover:border-white/45 hover:bg-white/20" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50")}><Icon size={16} />{label}</button>;
+  return <button type="button" onClick={onClick} className={cn("flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70", accent ? "bg-brand text-brand-foreground shadow-sm hover:bg-brand-strong" : dark ? "border border-white/30 bg-white/15 text-white shadow-sm hover:border-white/45 hover:bg-white/20" : "border border-border bg-background text-foreground hover:bg-muted")}><Icon size={16} className="shrink-0" /><span className="truncate">{label}</span></button>;
 }
 function formatBytes(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 function fileCategoryLabel(value) { return fileCategoryOptions.find(([category]) => category === value)?.[1] || "Document"; }

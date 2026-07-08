@@ -265,10 +265,49 @@ const WORK_PRODUCT_REFERENCES = {
     qualityBar: "The checklist must be actionable on a phone during a walkthrough and each item should produce useful estimator evidence."
   },
   follow_up_email: {
-    purpose: "Create a concise customer follow-up that asks for the missing data needed to move the inquiry forward.",
+    purpose: "Create a polished customer follow-up that moves the inquiry forward based on the requested response goal.",
     requiredSections: ["Greeting", "Context", "Questions", "Suggested next step", "Signature"],
     requiredData: ["contact name", "project summary", "missing requirements", "timeline pressure", "preferred communication channel"],
-    qualityBar: "The email must ask only for information that is actually missing and should sound professional, direct, and helpful."
+    qualityBar: "The email must be send-ready, specific to the project, tactful about missing information, and free of generic filler."
+  }
+};
+
+const FOLLOW_UP_RESPONSE_GOALS = {
+  info_request: {
+    label: "Request info",
+    intent: "Collect the highest-impact missing details and source evidence needed for estimating or proposal generation.",
+    useWhen: "Use when required information, scope evidence, data-destruction details, access information, or customer responsibilities are incomplete.",
+    guidance: [
+      "Open warmly and acknowledge the customer's project and timeline.",
+      "Ask only for missing or uncertain items; do not request data already present in inquiry fields, missing requirements, summaries, existing documents, or file metadata.",
+      "Group questions into a short, scannable list with practical labels.",
+      "Explain why the requested items help pricing, schedule, safety, or scope accuracy.",
+      "Close with one clear next step and offer a brief call or site review if useful."
+    ]
+  },
+  schedule_visit: {
+    label: "Schedule visit",
+    intent: "Move the customer toward a site walk or coordination call while confirming only the access details needed to schedule it.",
+    useWhen: "Use when the scope has enough signal to justify field verification or when constraints, counts, photos, or access need on-site confirmation.",
+    guidance: [
+      "Lead with the value of a site visit: tighter scope, safer planning, and better pricing confidence.",
+      "Propose a low-friction scheduling path with a few availability windows rather than an open-ended request.",
+      "Confirm escort, badge, loading dock, parking, PPE, and photo permissions only when they are missing or uncertain.",
+      "Keep the tone professional and operational, not salesy.",
+      "End with a specific scheduling ask."
+    ]
+  },
+  proposal_ready: {
+    label: "Proposal-ready",
+    intent: "Confirm that DCDecom has enough information to proceed toward a proposal while naming any assumptions or final dependencies.",
+    useWhen: "Use when the inquiry has strong scope detail and the next step is proposal preparation, internal review, or final dependency confirmation.",
+    guidance: [
+      "Summarize the understood project scope in a concise paragraph.",
+      "State that DCDecom is preparing the proposal or next work product.",
+      "Call out any remaining assumptions or dependencies without making the email feel blocked.",
+      "Avoid asking broad discovery questions; focus on final confirmations only.",
+      "Close with expected next action and timing."
+    ]
   }
 };
 
@@ -276,10 +315,14 @@ const WORK_PRODUCT_DEVELOPER_PROMPT = [
   "You are DCDecom's senior estimator and customer success drafter.",
   "Generate only practical, customer-ready work product content for data center decommissioning workflows.",
   "Use the supplied workProductReference as the controlling document brief for purpose, required sections, required data, and quality bar.",
+  "For follow_up_email, use responseGoal and responseGoalReference as controlling instructions for intent, source selection, question selection, and call to action.",
   "Every required section must be represented in either sections or body unless it is irrelevant; if omitted, explain why in missingRiskNotes.",
   "Do not invent confirmed facts. Convert unknown required data into assumptions, missingRiskNotes, or nextActions.",
   "Use all available inquiry, extracted field, missing requirement, summary, and existing document data before asking for more information.",
-  "Treat sourceDocuments as the user-selected files for this run. Use allSelectedProjectFileMetadata only for awareness, not as controlling evidence.",
+  "For follow-up emails, infer which project files and metadata are relevant from responseGoal; do not require a user-selected source list.",
+  "Treat sourceDocuments as available source evidence for this run. Use allSelectedProjectFileMetadata for awareness and avoid asking for already-uploaded files.",
+  "Follow-up email bodies must be send-ready plain text with a human greeting, concise paragraphs, a short bullet list only when helpful, and a professional signature.",
+  "Follow-up emails must not mention internal AI, prompt configuration, confidence scores, or app workflow labels.",
   "Apply userInstructions as explicit drafting direction unless it conflicts with known project data.",
   "Use concise professional language suitable for a mobile operations workflow."
 ].join(" ");
@@ -301,7 +344,7 @@ const AI_PROMPT_REGISTRY = [
     version: "2026-07-04",
     status: "active",
     schemaName: "dcdcom_work_product",
-    summary: "Generates follow-up emails, proposals, scopes, estimates, and site checklists from inquiry data and selected source documents.",
+    summary: "Generates follow-up emails from response goals and project context, plus proposals, scopes, estimates, and site checklists from inquiry data and source documents.",
     modelDefault: "gpt-5.5",
     fallback: "local-rules"
   }
@@ -376,17 +419,19 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
   }
 }
 
-export async function generateWorkProduct(env, { type, inquiry, fields = [], missing = [], summaries = [], documents = [], files = [], tone = "Professional", sourceDocumentIds, additionalContext = "" }) {
+export async function generateWorkProduct(env, { type, inquiry, fields = [], missing = [], summaries = [], documents = [], files = [], tone = "Professional", responseGoal, sourceDocumentIds, additionalContext = "" }) {
   const normalizedType = normalizeWorkProductType(type);
+  const normalizedResponseGoal = normalizeResponseGoal(responseGoal);
   const selectedFiles = selectedSourceFiles(files, sourceDocumentIds);
   const sourceDocuments = uploadedFileContext(selectedFiles);
   const context = String(additionalContext || "").trim();
   const generationContext = {
     selectedSourceDocumentIds: Array.isArray(sourceDocumentIds) ? sourceDocumentIds : sourceDocuments.map((file) => file.id).filter(Boolean),
     sourceDocuments,
+    responseGoal: normalizedType === "follow_up_email" ? normalizedResponseGoal : null,
     additionalContext: context || null
   };
-  const fallback = () => fallbackWorkProduct({ type: normalizedType, inquiry, fields, missing, summaries, files: selectedFiles, tone, additionalContext: context });
+  const fallback = () => fallbackWorkProduct({ type: normalizedType, inquiry, fields, missing, summaries, files: selectedFiles, tone, responseGoal: normalizedResponseGoal, additionalContext: context });
   if (!env?.OPENAI_API_KEY) {
     return { mode: "fallback", model: "local-rules", promptVersionId: promptVersionForRunType("work_product"), product: fallback(), generationContext, error: "OPENAI_API_KEY is not configured." };
   }
@@ -401,6 +446,8 @@ export async function generateWorkProduct(env, { type, inquiry, fields = [], mis
       userText: JSON.stringify({
         requestedType: normalizedType,
         tone,
+        responseGoal: normalizedType === "follow_up_email" ? normalizedResponseGoal : null,
+        responseGoalReference: normalizedType === "follow_up_email" ? FOLLOW_UP_RESPONSE_GOALS[normalizedResponseGoal] : null,
         workProductReference: WORK_PRODUCT_REFERENCES[normalizedType],
         projectData: {
           inquiry,
@@ -626,7 +673,7 @@ function normalizeLineItems(items, low, high) {
   })).slice(0, 8);
 }
 
-function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, files, tone, additionalContext = "" }) {
+function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, files, tone, responseGoal = "info_request", additionalContext = "" }) {
   const field = (key) => fields.find((item) => item.field_key === key)?.value_text;
   const missingLabels = missing.map((item) => item.label);
   const sourceFiles = uploadedFileContext(files);
@@ -655,20 +702,7 @@ function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, files,
     }
   ];
   const bodyByType = {
-    follow_up_email: [
-      `Hi ${inquiry.contact_name || "there"},`,
-      "",
-      `Thank you for reaching out about ${inquiry.title}. ${summary}`,
-      "",
-      missingLabels.length
-        ? `To prepare an accurate estimate, could you confirm: ${missingLabels.join("; ")}?`
-        : "We have enough to begin estimating and would recommend confirming site access before scheduling.",
-      "",
-      "We can also schedule a quick site review to validate scope and reduce proposal risk.",
-      "",
-      "Best regards,",
-      "DCDecom Team"
-    ].join("\n"),
+    follow_up_email: fallbackFollowUpEmail({ inquiry, missingLabels, sourceFiles, summary, responseGoal }),
     scope_of_work: sections.map((section) => `${section.title}\n${section.body}`).join("\n\n"),
     proposal: sections.map((section) => `${section.title}\n${section.body}`).join("\n\n"),
     site_checklist: [
@@ -683,7 +717,7 @@ function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, files,
   return normalizeWorkProduct({
     documentType: type,
     title: titleFor(type, inquiry),
-    subject: type === "follow_up_email" ? `Quick follow-up on ${inquiry.title}` : null,
+    subject: type === "follow_up_email" ? followUpSubject(inquiry, responseGoal) : null,
     body: bodyByType[type] || bodyByType.scope_of_work,
     sections,
     estimate: {
@@ -697,6 +731,81 @@ function fallbackWorkProduct({ type, inquiry, fields, missing, summaries, files,
     missingRiskNotes: missingLabels.map((label) => `${label} may affect price or schedule.`),
     nextActions: missingLabels.length ? ["Send follow-up questions", "Schedule site visit", "Review estimate assumptions"] : ["Review estimate", "Send proposal for approval"]
   }, type, inquiry);
+}
+
+function fallbackFollowUpEmail({ inquiry, missingLabels, sourceFiles, summary, responseGoal }) {
+  const goal = normalizeResponseGoal(responseGoal);
+  const contact = inquiry.contact_name || "there";
+  const project = inquiry.title || "your project";
+  const uploadedCategories = new Set(sourceFiles.map((file) => file.category));
+  const hasFloorPlan = uploadedCategories.has("floor_plan");
+  const hasEquipmentList = uploadedCategories.has("equipment_list");
+  const hasPhotos = uploadedCategories.has("photo") || sourceFiles.some((file) => String(file.contentType || "").startsWith("image/"));
+  const usefulMissing = missingLabels.slice(0, 5);
+  const evidenceRequests = [
+    !hasFloorPlan ? "floor plan or marked-up layout" : null,
+    !hasEquipmentList ? "equipment inventory or asset list" : null,
+    !hasPhotos ? "current site photos of the work areas, access path, and loading dock" : null
+  ].filter(Boolean);
+
+  if (goal === "schedule_visit") {
+    return [
+      `Hi ${contact},`,
+      "",
+      `Thank you for the details on ${project}. Based on what we have so far, a short site review would help us validate the scope, access path, safety requirements, and any assumptions before we tighten pricing.`,
+      "",
+      "Could you send a few available windows for a walkthrough next week? We can work around your escort and security process.",
+      "",
+      usefulMissing.length ? `Before we arrive, it would also help to confirm: ${usefulMissing.join("; ")}.` : "If there are any escort, PPE, photo, or loading-dock requirements we should plan around, please send those over before the visit.",
+      "",
+      "Best regards,",
+      "DCDecom Team"
+    ].join("\n");
+  }
+
+  if (goal === "proposal_ready") {
+    return [
+      `Hi ${contact},`,
+      "",
+      `Thank you for the project information for ${project}. We have enough detail to begin preparing the next draft, and our current understanding is: ${summary}`,
+      "",
+      usefulMissing.length
+        ? `We will treat the following items as proposal assumptions unless you want to update them first: ${usefulMissing.join("; ")}.`
+        : "We will proceed using the provided scope, schedule, and site information.",
+      "",
+      "Our next step is to prepare the response package and call out any remaining dependencies clearly for your review.",
+      "",
+      "Best regards,",
+      "DCDecom Team"
+    ].join("\n");
+  }
+
+  return [
+    `Hi ${contact},`,
+    "",
+    `Thank you for reaching out about ${project}. ${summary}`,
+    "",
+    usefulMissing.length || evidenceRequests.length
+      ? "To prepare an accurate response, could you please send or confirm the following?"
+      : "We have the core project details and can begin reviewing next steps.",
+    ...(usefulMissing.length || evidenceRequests.length ? [
+      "",
+      ...[...usefulMissing, ...evidenceRequests].slice(0, 7).map((item) => `- ${item}`)
+    ] : []),
+    "",
+    "Once we have that, we can tighten the scope, schedule, and pricing assumptions and move the project forward.",
+    "",
+    "Best regards,",
+    "DCDecom Team"
+  ].join("\n");
+}
+
+function followUpSubject(inquiry, responseGoal) {
+  const title = inquiry.title || "your project";
+  const goal = normalizeResponseGoal(responseGoal);
+  if (goal === "schedule_visit") return `Site review for ${title}`;
+  if (goal === "proposal_ready") return `Next steps for ${title}`;
+  return `Follow-up on ${title}`;
 }
 
 function uploadedFileContext(files = []) {
@@ -725,6 +834,11 @@ function normalizeWorkProductType(type) {
   const normalized = String(type || "follow_up_email").toLowerCase();
   if (["follow_up_email", "proposal", "scope_of_work", "site_checklist", "estimate"].includes(normalized)) return normalized;
   return "follow_up_email";
+}
+
+function normalizeResponseGoal(value) {
+  const normalized = String(value || "info_request").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(FOLLOW_UP_RESPONSE_GOALS, normalized) ? normalized : "info_request";
 }
 
 function titleFor(type, inquiry) {
