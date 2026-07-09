@@ -11,6 +11,7 @@ const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${crypto.randomUUID()}`;
 const writeGroup = (db, callback) => callback(db);
 const LOW_CONFIDENCE_THRESHOLD = 70;
+const D1_SAFE_INSERT_CHUNK_SIZE = 8;
 const NOTIFICATION_TYPES = new Set(["lead_created", "extraction_complete", "extraction_low_confidence", "missing_information", "follow_up_needed", "proposal_ready", "site_visit_needed", "status_changed", "system_success", "system_error"]);
 const NOTIFICATION_SEVERITIES = new Set(["info", "success", "warning", "error"]);
 const NOTIFICATION_STATUSES = new Set(["unread", "read", "archived"]);
@@ -25,6 +26,15 @@ const STATUS_TRANSITIONS = {
   lost: ["archived"],
   archived: []
 };
+
+async function insertValues(db, table, values, options = {}) {
+  const chunkSize = options.chunkSize || D1_SAFE_INSERT_CHUNK_SIZE;
+  for (let index = 0; index < values.length; index += chunkSize) {
+    let statement = db.insert(table).values(values.slice(index, index + chunkSize));
+    if (options.onConflictDoNothing) statement = statement.onConflictDoNothing();
+    await statement;
+  }
+}
 
 export async function listInquiries(env, accountId, filters = {}) {
   const db = getDb(env);
@@ -1412,7 +1422,7 @@ async function persistExtractedFields(env, inquiryId, sourceId, extraction, db =
   const values = [
     ["company_name", "Company", extraction.company.name], ["contact_name", "Contact", extraction.contact.fullName], ["contact_email", "Email", extraction.contact.email], ["contact_phone", "Phone", extraction.contact.phone], ["site_address", "Site address", extraction.site.fullAddress], ["site_city", "City", extraction.site.city], ["site_region", "Region", extraction.site.region], ["service_type", "Service", extraction.service.label], ["lease_end_date", "Lease expiration date", extraction.timeline.leaseEndDate], ["requested_due_date", "Requested due date", extraction.timeline.requestedDueDate], ["access_requirements", "Site access requirements", extraction.site.accessNotes], ["rack_count", "Rack count", extraction.equipment.rackCount == null ? null : String(extraction.equipment.rackCount)], ["equipment_assets", "Equipment", extraction.equipment.assets.join(", ") || null], ["estimate_range", "Estimate range", centsRange(extraction.estimateRange.lowCents, extraction.estimateRange.highCents)]
   ].filter(([, , value]) => value !== null && value !== undefined && value !== "");
-  if (values.length) await db.insert(extractedFields).values(values.map(([fieldKey, label, valueText]) => ({ id: id("field"), inquiryId, fieldKey, label, valueText, confidenceScore: extraction.confidenceScore, sourceId }))).onConflictDoNothing();
+  if (values.length) await insertValues(db, extractedFields, values.map(([fieldKey, label, valueText]) => ({ id: id("field"), inquiryId, fieldKey, label, valueText, confidenceScore: extraction.confidenceScore, sourceId })), { onConflictDoNothing: true });
 }
 
 async function upsertExtractedField(env, inquiryId, fieldKey, label, valueText, confidenceScore = 100) {
@@ -1429,21 +1439,21 @@ async function upsertExtractedField(env, inquiryId, fieldKey, label, valueText, 
 }
 
 async function persistMissingRequirements(env, inquiryId, requirements, db = getDb(env)) {
-  if (requirements.length) await db.insert(missingRequirements).values(requirements.map((item) => ({ id: id("miss"), inquiryId, requirementKey: item.key, label: item.label, category: item.category, severity: item.severity, status: "open", notes: item.reason }))).onConflictDoNothing();
+  if (requirements.length) await insertValues(db, missingRequirements, requirements.map((item) => ({ id: id("miss"), inquiryId, requirementKey: item.key, label: item.label, category: item.category, severity: item.severity, status: "open", notes: item.reason })), { onConflictDoNothing: true });
 }
 
 async function createEstimateRecords(env, inquiryId, userId, product, db = getDb(env)) {
   const [{ version: latestVersion }] = await db.select({ version: max(estimates.version) }).from(estimates).where(eq(estimates.inquiryId, inquiryId));
   const estimateId = id("est");
   await db.insert(estimates).values({ id: estimateId, inquiryId, version: Number(latestVersion || 0) + 1, status: product.approvalRequired ? "draft" : "approved", lowCents: product.estimate.lowCents, highCents: product.estimate.highCents, assumptions: product.estimate.assumptions, createdByUserId: userId });
-  if (product.estimate.lineItems.length) await db.insert(estimateLines).values(product.estimate.lineItems.map((item) => ({ id: id("line"), estimateId, lineType: item.lineType, description: item.description, quantity: item.quantity || 1, unit: item.unit || "each", unitCostCents: item.unitCostCents || 0, totalCents: Math.round(Number(item.quantity || 1) * Number(item.unitCostCents || 0)) })));
+  if (product.estimate.lineItems.length) await insertValues(db, estimateLines, product.estimate.lineItems.map((item) => ({ id: id("line"), estimateId, lineType: item.lineType, description: item.description, quantity: item.quantity || 1, unit: item.unit || "each", unitCostCents: item.unitCostCents || 0, totalCents: Math.round(Number(item.quantity || 1) * Number(item.unitCostCents || 0)) })));
   return estimateId;
 }
 
 async function createProposalRecords(env, inquiryId, estimateId, documentId, product, db = getDb(env)) {
   const proposalId = id("prop");
   await db.insert(proposals).values({ id: proposalId, inquiryId, estimateId, documentId, status: product.approvalRequired ? "review" : "draft", priceLowCents: product.estimate.lowCents, priceHighCents: product.estimate.highCents, requiresApproval: product.approvalRequired });
-  if (product.sections.length) await db.insert(proposalSections).values(product.sections.map((section, index) => ({ id: id("section"), proposalId, sectionKey: section.key, title: section.title, body: section.body, displayOrder: index + 1 })));
+  if (product.sections.length) await insertValues(db, proposalSections, product.sections.map((section, index) => ({ id: id("section"), proposalId, sectionKey: section.key, title: section.title, body: section.body, displayOrder: index + 1 })));
   return proposalId;
 }
 
@@ -1459,7 +1469,7 @@ async function ensureChecklistItems(env, visitId, labels, db = getDb(env)) {
   const existing = await db.select({ itemKey: checklistItems.itemKey }).from(checklistItems).where(eq(checklistItems.siteVisitId, visitId));
   const keys = new Set(existing.map((item) => item.itemKey));
   const values = labels.map((label) => ({ key: label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 42) || id("item"), label })).filter((item) => !keys.has(item.key)).map((item) => ({ id: id("check"), siteVisitId: visitId, itemKey: item.key, label: item.label, status: "open" }));
-  if (values.length) await db.insert(checklistItems).values(values).onConflictDoNothing();
+  if (values.length) await insertValues(db, checklistItems, values, { onConflictDoNothing: true });
 }
 
 async function queueCalendarHold(env, accountId, inquiryId, userId, payload, db = getDb(env)) {

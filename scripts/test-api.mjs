@@ -286,6 +286,9 @@ NorthStar Compute Services`;
   });
   assert(saved.status === 201, "source intake should create inquiry");
   assert(saved.body.id, "source intake should return inquiry id");
+  const savedDetail = await request(env, "GET", `/api/inquiries/${saved.body.id}`);
+  assert(savedDetail.status === 200, "newly created inquiry detail should load");
+  assert(savedDetail.body.fields.some((field) => field.field_key === "company_name" && field.value_text === "NTT Data"), "source intake should persist extracted fields for inquiry detail");
 
   const fetchBeforeIntakeTimeout = globalThis.fetch;
   try {
