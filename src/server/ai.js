@@ -166,6 +166,13 @@ EXTRACTION COVERAGE
 - Data and electrical: whether data wiping, shredding, certificates, chain of custody, electrical shutdowns, or disconnect responsibility are mentioned.
 - Commercial: whether a budget or not-to-exceed amount is mentioned, whether the decision maker is identifiable, and whether a quote, estimate, proposal, or bid is requested.
 
+LAYOUT AND EVIDENCE RULES
+- Treat labels such as From, Primary Contact, Project Site, Requested Scope, Data Security, Electrical Responsibility, Access and Logistics, Safety, Commercial Information, and Attached as strong structure even when the message is pasted as plain text.
+- Company names may appear in the intro sentence, signature block, site/facility name, sender header, or email domain. Do not return "Unknown Company" when a named organization is present anywhere in the source.
+- Prefer the Primary Contact block over the sender header for contact name, email, phone, and preferred channel.
+- Attached-file lists count as evidence already provided. Do not ask for a floor plan, inventory, site photos, dock instructions, contractor rules, or electrical responsibility matrix when the source says those items are attached.
+- Use deterministic parser hints as supporting evidence, but let the raw customer communication override a hint if the source clearly contradicts it.
+
 MISSING REQUIREMENTS
 Identify up to 10 unanswered items that materially affect scope, scheduling, safety, access, documentation, or pricing. Consider site location, square footage, equipment quantities, floor plans, equipment lists, site photos, access restrictions, deadlines, data destruction, electrical responsibility, hazardous materials, asset ownership, resale expectations, budget, approval process, and decision maker.
 For every missing requirement provide a stable snake_case key, a clear customer-facing label, the best matching category, an accurate severity, and a concise explanation of why it matters. Use blocking only when work cannot responsibly proceed without the answer.
@@ -361,12 +368,13 @@ export function promptVersionForRunType(runType) {
 
 export async function analyzeIntake(env, { rawText, sourceChannel = "manual", subject = "", sender = "", attachmentText = "" }) {
   const normalizedText = String(rawText || "").trim();
+  const hints = intakeHints(normalizedText, sourceChannel, { subject, sender, attachmentText });
   if (normalizedText.length < 12) {
     return {
       mode: "fallback",
       model: "local-rules",
       promptVersionId: promptVersionForRunType("intake_extraction"),
-      extraction: fallbackExtraction(normalizedText, sourceChannel),
+      extraction: fallbackExtraction(normalizedText, sourceChannel, hints),
       error: "Intake text was too short for live AI analysis."
     };
   }
@@ -376,7 +384,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
       mode: "fallback",
       model: "local-rules",
       promptVersionId: promptVersionForRunType("intake_extraction"),
-      extraction: fallbackExtraction(normalizedText, sourceChannel),
+      extraction: fallbackExtraction(normalizedText, sourceChannel, hints),
       error: "OPENAI_API_KEY is not configured."
     };
   }
@@ -394,6 +402,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
         `Source channel: ${sourceChannel}`,
         subject ? `Subject: ${subject}` : null,
         sender ? `Sender: ${sender}` : null,
+        intakeHintsText(hints),
         "",
         "Customer communication:",
         normalizedText,
@@ -405,7 +414,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
       model,
       promptVersionId: promptVersionForRunType("intake_extraction"),
       latencyMs: Date.now() - started,
-      extraction: normalizeExtraction(parsed, sourceChannel),
+      extraction: normalizeExtraction(mergeExtractionHints(parsed, hints), sourceChannel),
       rawResponseId: data.id
     };
   } catch (error) {
@@ -414,7 +423,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
       model,
       promptVersionId: promptVersionForRunType("intake_extraction"),
       latencyMs: Date.now() - started,
-      extraction: fallbackExtraction(normalizedText, sourceChannel),
+      extraction: fallbackExtraction(normalizedText, sourceChannel, hints),
       error: error.message
     };
   }
@@ -861,52 +870,432 @@ function centsText(cents) {
   return `$${Math.round(Number(cents || 0) / 100).toLocaleString()}`;
 }
 
-function fallbackExtraction(text, sourceChannel) {
+function fallbackExtraction(text, sourceChannel, hints = intakeHints(text, sourceChannel)) {
   const lower = text.toLowerCase();
-  const companyName = /ntt data/i.test(text) ? "NTT Data" : /cushman/i.test(text) ? "Cushman & Wakefield" : /digital realty/i.test(text) ? "Digital Realty" : /equinix/i.test(text) ? "Equinix" : "Unknown Company";
-  const contactName = /(?:spoke with|from|contact is)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/.exec(text)?.[1] || (/tom/i.test(text) ? "Tom" : /michael/i.test(text) ? "Michael" : "Unknown Contact");
-  const location = /ashburn/i.test(text) ? ["Ashburn", "VA"] : /phoenix/i.test(text) ? ["Phoenix", "AZ"] : /washington|dc/i.test(text) ? ["Washington", "DC"] : /chicago/i.test(text) ? ["Chicago", "IL"] : [null, null];
-  const serviceLabel = lower.includes("hvac") && !lower.includes("data center") ? "HVAC Removal" : lower.includes("cable") && !lower.includes("data center") ? "Cable Abatement" : lower.includes("electrical") && !lower.includes("data center") ? "Electrical Decommissioning" : "Data Center Decommissioning";
-  const rackMatch = /(\d+)\s*(?:racks?|cabinets?)/i.exec(text);
-  const missing = [];
-  if (!/square|sq\.?\s*ft|suite size/i.test(text)) missing.push(["square_footage", "Square footage / suite size", "scope", "high", "Sizing is needed for labor and logistics assumptions."]);
-  if (!rackMatch && /rack|cabinet|data center/i.test(text)) missing.push(["rack_count", "Number of racks / cabinets", "equipment", "high", "Rack count drives labor, recycling, and trucking."]);
-  if (!/access|after hours|business hours|badge|escort/i.test(text)) missing.push(["access_hours", "Site access hours or restrictions", "access", "high", "Crew scheduling depends on access windows."]);
-  if (!/floor plan|drawing|plan/i.test(text)) missing.push(["floor_plan", "Floor plan or site drawings", "documentation", "medium", "Drawings reduce site visit and proposal risk."]);
-  if (!/data destruction|drive|media|wipe|shred/i.test(text)) missing.push(["data_destruction", "Data destruction requirements", "scope", "medium", "Media handling changes chain-of-custody and cost."]);
-  if (!/disconnect|utility|shutoff|electrical/i.test(text)) missing.push(["electrical_disconnect", "Electrical disconnect responsibility", "safety", "high", "Electrical responsibility must be known before scope approval."]);
-
+  const companyName = hints.companyName || knownCompanyName(text) || "Unknown Company";
+  const contactName = hints.contactName || /(?:spoke with|contact is)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i.exec(text)?.[1] || "Unknown Contact";
+  const location = hints.city || hints.region ? [hints.city || null, hints.region || null] : fallbackLocation(text);
+  const serviceLabel = /data center|data hall|rack|cabinet|decommissioning/.test(lower) ? "Data Center Decommissioning" : lower.includes("hvac") ? "HVAC Removal" : lower.includes("cable") ? "Cable Abatement" : lower.includes("electrical") ? "Electrical Decommissioning" : "Data Center Decommissioning";
+  const rackCount = hints.rackCount ?? rackCountFromText(text);
+  const assets = mergeUnique([rackCount ? `${rackCount} racks` : null, ...hints.assets]);
+  const missing = fallbackMissing(text, hints, rackCount);
   const confidence = Math.max(48, 92 - missing.length * 5 - (companyName === "Unknown Company" ? 12 : 0));
-  const lowCents = serviceLabel === "Data Center Decommissioning" ? 2500000 : serviceLabel === "Cable Abatement" ? 800000 : 1200000;
-  const highCents = serviceLabel === "Data Center Decommissioning" ? 4500000 : serviceLabel === "Cable Abatement" ? 1400000 : 2800000;
-  const assets = [
-    rackMatch ? `${rackMatch[1]} racks` : null,
-    /hvac|crac|cooling/i.test(text) ? "HVAC units" : null,
-    /cable|fiber|copper/i.test(text) ? "Cable" : null,
-    /ups|battery/i.test(text) ? "UPS/batteries" : null
-  ].filter(Boolean);
+  const lowCents = hints.budgetCents ? null : serviceLabel === "Data Center Decommissioning" ? 2500000 : serviceLabel === "Cable Abatement" ? 800000 : 1200000;
+  const highCents = hints.budgetCents || (serviceLabel === "Data Center Decommissioning" ? 4500000 : serviceLabel === "Cable Abatement" ? 1400000 : 2800000);
+  const scopeBullets = mergeUnique([
+    ...scopeBulletsFromText(text),
+    ...scopeFor(serviceLabel, assets)
+  ]).slice(0, 8);
 
   return normalizeExtraction({
-    company: { name: companyName, website: null, industry: /data center|rack|cabinet/i.test(text) ? "Data Centers" : null },
-    contact: { fullName: contactName, email: emailFrom(text), phone: phoneFrom(text), preferredChannel: channelToPreference(sourceChannel) },
-    site: { name: companyName === "Unknown Company" ? "Customer Site" : `${companyName} Site`, fullAddress: addressFrom(text), city: location[0], region: location[1], country: "US", siteType: /data center|rack|cabinet/i.test(text) ? "data_center" : "unknown", accessNotes: accessFrom(text) },
+    company: { name: companyName, website: null, industry: /data center|rack|cabinet|hosting|cloud|colo/i.test(text) ? "Data Centers" : null },
+    contact: { fullName: contactName, email: hints.email || emailFrom(text), phone: hints.phone || phoneFrom(text), preferredChannel: hints.preferredChannel || channelToPreference(sourceChannel) },
+    site: {
+      name: hints.siteName || (companyName === "Unknown Company" ? "Customer Site" : `${companyName} Site`),
+      fullAddress: hints.fullAddress || addressFrom(text),
+      city: location[0],
+      region: location[1],
+      country: hints.country || "US",
+      siteType: /data center|rack|cabinet|data hall|colo/i.test(text) ? "data_center" : "unknown",
+      accessNotes: hints.accessNotes || accessFrom(text)
+    },
     service: {
       type: SERVICE_TYPES[serviceLabel] || "other",
       label: serviceLabel,
-      scopeBullets: scopeFor(serviceLabel, assets)
+      scopeBullets
     },
-    timeline: { leaseEndDate: dateFrom(text), requestedDueDate: null, urgencyReason: /lease|closing|urgent|asap/i.test(text) ? "Customer mentioned lease/closure timing." : null },
-    equipment: { rackCount: rackMatch ? Number(rackMatch[1]) : null, assets, dataDestructionMentioned: /data destruction|drive|media|wipe|shred/i.test(text), electricalDisconnectMentioned: /disconnect|utility|shutoff|electrical/i.test(text) },
-    commercial: { budgetMentioned: /\$|budget|not to exceed/i.test(text), decisionMakerKnown: /director|manager|owner|vp/i.test(text), proposalRequested: /proposal|quote|estimate/i.test(text) },
+    timeline: {
+      leaseEndDate: hints.leaseEndDate || dateFrom(text),
+      requestedDueDate: hints.requestedDueDate,
+      urgencyReason: hints.urgencyReason || (/lease|closing|urgent|asap|deadline|turnover/i.test(text) ? "Customer mentioned deadline or turnover timing." : null)
+    },
+    equipment: {
+      rackCount,
+      assets,
+      dataDestructionMentioned: /data destruction|data sanitization|drive|media|wipe|shred|nist|chain-of-custody/i.test(text),
+      electricalDisconnectMentioned: /disconnect|lockout|tagout|loto|utility|shutoff|electrical|building power/i.test(text)
+    },
+    commercial: {
+      budgetMentioned: Boolean(hints.budgetCents) || /\$|budget|not[- ]?to[- ]?exceed/i.test(text),
+      decisionMakerKnown: /decision maker|approval|director|manager|owner|vp|vice president/i.test(text),
+      proposalRequested: /proposal|quote|estimate|bid|formal proposal/i.test(text)
+    },
     missingRequirements: missing.map(([key, label, category, severity, reason]) => ({ key, label, category, severity, reason })),
-    summary: `Customer communication appears to request ${serviceLabel.toLowerCase()}${location[0] ? ` in ${location[0]}, ${location[1]}` : ""}. ${missing.length ? "Several scope details need confirmation before final pricing." : "The request has enough detail for estimating review."}`,
-    priority: /urgent|asap|lease|closing/i.test(text) ? "high" : "medium",
-    workload: /data center|40 racks|hvac|electrical/i.test(text) ? "medium" : "low",
+    summary: `Customer communication appears to request ${serviceLabel.toLowerCase()}${location[0] ? ` in ${location[0]}, ${location[1]}` : ""}. ${missing.length ? "Remaining assumptions should be confirmed before final pricing." : "The request has enough detail for estimating review."}`,
+    priority: /urgent|asap|lease|closing|deadline|turnover/i.test(text) ? "high" : "medium",
+    workload: /data center|data hall|40 racks|hvac|electrical|\b\d{3,}\s+servers?|\b\d{3,}\s+battery/i.test(text) ? "high" : "low",
     confidenceScore: confidence,
-    estimateRange: { lowCents, highCents, rationale: "Fallback range based on service type and detected equipment signals." },
-    nextBestActions: ["Send missing-info follow-up", "Request site photos or floor plan", "Prepare site visit checklist"],
+    estimateRange: { lowCents, highCents, rationale: hints.budgetCents ? "Fallback range uses the stated not-to-exceed budget as the upper bound." : "Fallback range based on service type and detected equipment signals." },
+    nextBestActions: missing.length ? ["Review source details", "Confirm remaining assumptions", "Prepare proposal checklist"] : ["Prepare proposal draft", "Review attached inventory and site materials", "Confirm mobilization dependencies"],
     followUpQuestions: missing.map(([, label]) => `Can you confirm ${label.toLowerCase()}?`)
   }, sourceChannel);
+}
+
+function intakeHints(text, sourceChannel, context = {}) {
+  const source = cleanSourceText([context.sender ? `From: ${context.sender}` : null, context.subject ? `Subject: ${context.subject}` : null, text, context.attachmentText].filter(Boolean).join("\n"));
+  const sections = sectionsFrom(source);
+  const fromLine = /^From:\s*(.+)$/im.exec(source)?.[1] || context.sender || "";
+  const contactBlock = sections.get("primary contact") || "";
+  const siteBlock = sections.get("project site") || "";
+  const attachedBlock = sections.get("attached") || "";
+  const contactName = contactFromBlock(contactBlock) || contactFromFromLine(fromLine) || contactFromCasualSource(source);
+  const email = emailFrom(contactBlock) || emailFrom(fromLine) || emailFrom(source);
+  const phone = phoneFrom(contactBlock) || phoneFrom(source);
+  const siteName = siteNameFromBlock(siteBlock);
+  const fullAddress = addressFromProjectSite(siteBlock) || addressFrom(source);
+  const siteLocation = locationFromAddress(fullAddress || siteBlock) || {};
+  const companyName = companyFromIntro(source) || companyFromCasualSource(source) || companyFromSignature(source, contactName) || knownCompanyName(source) || companyFromSiteName(siteName) || companyFromEmail(email);
+  const requestedDueDate = dateNear(source, [
+    /(?:completed|complete|finished|finish|done)\s+by\s+([A-Z][a-z]+\.?\s+\d{1,2}(?:,\s*20\d{2})?|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/(?:20\d{2})?)/i,
+    /(?:work\s+completed\s+by|completion\s+deadline\s+is)\s+([A-Z][a-z]+\.?\s+\d{1,2}(?:,\s*20\d{2})?|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/(?:20\d{2})?)/i
+  ]);
+  const leaseEndDate = dateNear(source, [
+    /(?:landlord turnover deadline|lease expiration|lease expires|turnover deadline)\s+(?:is\s+)?([A-Z][a-z]+\.?\s+\d{1,2}(?:,\s*20\d{2})?|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/(?:20\d{2})?)/i
+  ]);
+  const proposalDueDate = dateNear(source, [
+    /(?:proposal|bid|estimate)\s+(?:by|due)\s+([A-Z][a-z]+\.?\s+\d{1,2}(?:,\s*20\d{2})?|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/(?:20\d{2})?)/i
+  ]);
+  const attachments = attachmentHints(attachedBlock || source);
+  return {
+    companyName,
+    contactName,
+    email,
+    phone,
+    preferredChannel: /email is preferred|prefer email/i.test(source) ? "email" : channelToPreference(sourceChannel),
+    siteName,
+    fullAddress,
+    city: siteLocation.city || null,
+    region: siteLocation.region || null,
+    country: siteLocation.country || (/usa|united states/i.test(source) ? "US" : null),
+    accessNotes: accessHints(source),
+    rackCount: rackCountFromText(source),
+    assets: assetHints(source),
+    leaseEndDate,
+    requestedDueDate,
+    proposalDueDate,
+    urgencyReason: leaseEndDate || requestedDueDate ? "Customer stated project completion or turnover deadlines." : null,
+    budgetCents: budgetCentsFrom(source),
+    attachments
+  };
+}
+
+function intakeHintsText(hints) {
+  const useful = {
+    companyName: hints.companyName,
+    contactName: hints.contactName,
+    email: hints.email,
+    phone: hints.phone,
+    preferredChannel: hints.preferredChannel,
+    siteName: hints.siteName,
+    fullAddress: hints.fullAddress,
+    city: hints.city,
+    region: hints.region,
+    country: hints.country,
+    rackCount: hints.rackCount,
+    assets: hints.assets,
+    leaseEndDate: hints.leaseEndDate,
+    requestedDueDate: hints.requestedDueDate,
+    proposalDueDate: hints.proposalDueDate,
+    budgetCents: hints.budgetCents,
+    attachments: Object.entries(hints.attachments || {}).filter(([, value]) => value).map(([key]) => key)
+  };
+  const compact = Object.fromEntries(Object.entries(useful).filter(([, value]) => Array.isArray(value) ? value.length : value !== null && value !== undefined && value !== ""));
+  if (!Object.keys(compact).length) return null;
+  return `Deterministic parser hints (supporting evidence; raw source controls if contradicted):\n${JSON.stringify(compact, null, 2)}`;
+}
+
+function mergeExtractionHints(extraction, hints) {
+  const next = {
+    ...extraction,
+    company: { ...(extraction.company || {}) },
+    contact: { ...(extraction.contact || {}) },
+    site: { ...(extraction.site || {}) },
+    timeline: { ...(extraction.timeline || {}) },
+    equipment: { ...(extraction.equipment || {}) },
+    commercial: { ...(extraction.commercial || {}) },
+    estimateRange: { ...(extraction.estimateRange || {}) }
+  };
+  if (hints.companyName && (!next.company.name || /^unknown company$/i.test(next.company.name))) next.company.name = hints.companyName;
+  if (hints.contactName && (!next.contact.fullName || /^unknown contact$/i.test(next.contact.fullName))) next.contact.fullName = hints.contactName;
+  if (hints.email && !next.contact.email) next.contact.email = hints.email;
+  if (hints.phone && !next.contact.phone) next.contact.phone = hints.phone;
+  if (hints.preferredChannel && (!next.contact.preferredChannel || next.contact.preferredChannel === "unknown")) next.contact.preferredChannel = hints.preferredChannel;
+  if (hints.siteName && (!next.site.name || /^customer site$/i.test(next.site.name))) next.site.name = hints.siteName;
+  if (hints.fullAddress && !next.site.fullAddress) next.site.fullAddress = hints.fullAddress;
+  if (hints.city && !next.site.city) next.site.city = hints.city;
+  if (hints.region && !next.site.region) next.site.region = hints.region;
+  if (hints.country && !next.site.country) next.site.country = hints.country;
+  if (hints.accessNotes && !next.site.accessNotes) next.site.accessNotes = hints.accessNotes;
+  if (hints.leaseEndDate && !next.timeline.leaseEndDate) next.timeline.leaseEndDate = hints.leaseEndDate;
+  if (hints.requestedDueDate && !next.timeline.requestedDueDate) next.timeline.requestedDueDate = hints.requestedDueDate;
+  if (hints.urgencyReason && !next.timeline.urgencyReason) next.timeline.urgencyReason = hints.urgencyReason;
+  if (typeof hints.rackCount === "number" && typeof next.equipment.rackCount !== "number") next.equipment.rackCount = hints.rackCount;
+  next.equipment.assets = mergeUnique([...(Array.isArray(next.equipment.assets) ? next.equipment.assets : []), ...hints.assets]).slice(0, 12);
+  if (/data destruction|data sanitization|nist|wipe|shred|chain-of-custody/i.test(JSON.stringify(hints.assets))) next.equipment.dataDestructionMentioned = true;
+  if (hints.budgetCents) {
+    next.commercial.budgetMentioned = true;
+    if (!next.estimateRange.highCents) next.estimateRange.highCents = hints.budgetCents;
+    if (!next.estimateRange.rationale) next.estimateRange.rationale = "Uses the customer-stated not-to-exceed budget as an upper bound.";
+  }
+  if (Array.isArray(next.missingRequirements)) {
+    next.missingRequirements = next.missingRequirements.filter((item) => !missingSatisfiedByHints(item, hints));
+  }
+  return next;
+}
+
+function fallbackMissing(text, hints, rackCount) {
+  const missing = [];
+  if (!/square|sq\.?\s*ft|suite size|data hall/i.test(text)) missing.push(["square_footage", "Square footage / suite size", "scope", "high", "Sizing is needed for labor and logistics assumptions."]);
+  if (!rackCount && /rack|cabinet|data center/i.test(text)) missing.push(["rack_count", "Number of racks / cabinets", "equipment", "high", "Rack count drives labor, recycling, and trucking."]);
+  if (!hints.accessNotes && !/access|after hours|business hours|badge|escort|security|loading dock|freight elevator|working hours/i.test(text)) missing.push(["access_hours", "Site access hours or restrictions", "access", "high", "Crew scheduling depends on access windows."]);
+  if (!hints.attachments?.floorPlan && !/floor plan|drawing|plan/i.test(text)) missing.push(["floor_plan", "Floor plan or site drawings", "documentation", "medium", "Drawings reduce site visit and proposal risk."]);
+  if (!/data destruction|data sanitization|drive|media|wipe|shred|nist/i.test(text)) missing.push(["data_destruction", "Data destruction requirements", "scope", "medium", "Media handling changes chain-of-custody and cost."]);
+  if (!/disconnect|utility|shutoff|electrical|lockout|tagout|loto/i.test(text)) missing.push(["electrical_disconnect", "Electrical disconnect responsibility", "safety", "high", "Electrical responsibility must be known before scope approval."]);
+  return missing.filter(([key]) => !missingSatisfiedByHints({ key }, hints));
+}
+
+function missingSatisfiedByHints(item, hints) {
+  const key = String(item?.key || "").toLowerCase();
+  const label = String(item?.label || "").toLowerCase();
+  const text = `${key} ${label}`;
+  if (hints.attachments?.floorPlan && /floor|drawing|plan/.test(text)) return true;
+  if (hints.attachments?.equipmentList && /equipment|inventory|asset/.test(text)) return true;
+  if (hints.attachments?.sitePhotos && /photo|image|picture/.test(text)) return true;
+  if (hints.attachments?.dockInstructions && /dock|elevator|loading|access/.test(text)) return true;
+  if (hints.attachments?.electricalMatrix && /electrical|disconnect|responsibility/.test(text)) return true;
+  return false;
+}
+
+function cleanSourceText(text) {
+  return String(text || "")
+    .replace(/\[([^\]]+)\]\(mailto:[^)]+\)/gi, "$1")
+    .replace(/mailto:/gi, "")
+    .replace(/[<>]/g, "")
+    .replace(/\r\n/g, "\n");
+}
+
+const INTAKE_SECTION_NAMES = new Map([
+  ["primary contact", "primary contact"],
+  ["project site", "project site"],
+  ["requested scope", "requested scope"],
+  ["data security", "data security"],
+  ["electrical responsibility", "electrical responsibility"],
+  ["access and logistics", "access and logistics"],
+  ["safety", "safety"],
+  ["commercial information", "commercial information"],
+  ["attached", "attached"],
+  ["attachments", "attached"]
+]);
+
+function sectionsFrom(text) {
+  const sections = new Map();
+  let current = null;
+  for (const line of String(text || "").split("\n")) {
+    const key = line.trim().replace(/:$/, "").toLowerCase();
+    if (INTAKE_SECTION_NAMES.has(key)) {
+      current = INTAKE_SECTION_NAMES.get(key);
+      if (!sections.has(current)) sections.set(current, "");
+      continue;
+    }
+    if (current) sections.set(current, `${sections.get(current)}\n${line}`.trim());
+  }
+  return sections;
+}
+
+function contactFromBlock(block) {
+  const line = String(block || "").split("\n").map((item) => item.trim()).find((item) => item && !/@/.test(item) && !phoneFrom(item));
+  const name = line?.split(",")[0]?.trim();
+  return isPersonName(name) ? name : null;
+}
+
+function contactFromFromLine(line) {
+  const display = String(line || "").replace(/\s+[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}.*$/i, "").trim();
+  return isPersonName(display) ? display : null;
+}
+
+function contactFromCasualSource(text) {
+  const match = /(?:spoke with|contact is)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:\s+from|\s+at|[,.]|$)/i.exec(String(text || ""));
+  return match ? match[1].trim() : null;
+}
+
+function isPersonName(value) {
+  return /^[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3}$/.test(String(value || "").trim());
+}
+
+function companyFromIntro(text) {
+  const source = String(text || "");
+  return cleanCompanyName(
+    /^([A-Z][A-Za-z0-9&.' -]{2,100}?),\s+(?:a|an|the)\s+[^.\n]+?\s+(?:is|are)\s+(?:requesting|seeking|looking|asking)\b/im.exec(source)?.[1]
+    || /^([A-Z][A-Za-z0-9&.' -]{2,100}?)\s+(?:is|are)\s+(?:requesting|seeking|looking|asking)\b/im.exec(source)?.[1]
+  );
+}
+
+function companyFromCasualSource(text) {
+  return cleanCompanyName(/(?:from|at)\s+([A-Z][A-Za-z0-9&.' -]{2,80}?)(?:\s+in\s+[A-Z][A-Za-z.' -]+,\s*[A-Z]{2}|[,.]|$)/.exec(String(text || ""))?.[1]);
+}
+
+function companyFromSignature(text, contactName) {
+  const lines = String(text || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  const start = contactName ? lastIndexMatching(lines, (line) => line.toLowerCase() === contactName.toLowerCase()) : -1;
+  if (start < 0 && !lines.some((line) => /^(thank you|thanks|regards|best|sincerely),?$/i.test(line))) return null;
+  const candidates = (start >= 0 ? lines.slice(start + 1, start + 5) : lines.slice(-8)).filter((line) => !(isPersonName(line) && !looksLikeCompanyLine(line)) && !/@/.test(line) && !phoneFrom(line));
+  return cleanCompanyName(candidates.find(looksLikeCompanyLine));
+}
+
+function lastIndexMatching(values, predicate) {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index], index)) return index;
+  }
+  return -1;
+}
+
+function knownCompanyName(text) {
+  if (/ntt data/i.test(text)) return "NTT Data";
+  if (/cushman/i.test(text)) return "Cushman & Wakefield";
+  if (/digital realty/i.test(text)) return "Digital Realty";
+  if (/equinix/i.test(text)) return "Equinix";
+  return null;
+}
+
+function looksLikeCompanyLine(line) {
+  return /\b(services|systems|solutions|compute|data|cloud|hosting|technologies|technology|telecom|communications|corp|corporation|inc|llc|ltd|group|partners|realty)\b/i.test(line);
+}
+
+function cleanCompanyName(value) {
+  const cleaned = String(value || "").replace(/^\d+\.\s*/, "").replace(/[.,;:]+$/, "").trim();
+  if (!cleaned || cleaned.length < 3 || (isPersonName(cleaned) && !looksLikeCompanyLine(cleaned))) return null;
+  return cleaned;
+}
+
+function companyFromEmail(email) {
+  const domain = String(email || "").split("@")[1]?.split(".")[0];
+  if (!domain || ["gmail", "outlook", "yahoo", "icloud", "hotmail", "example"].includes(domain.toLowerCase())) return null;
+  return domain.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function siteNameFromBlock(block) {
+  return String(block || "").split("\n").map((line) => line.trim()).find((line) => line && !/^\d/.test(line) && !/@/.test(line) && !phoneFrom(line)) || null;
+}
+
+function companyFromSiteName(siteName) {
+  if (!siteName) return null;
+  return cleanCompanyName(siteName.replace(/\b(data center|suite|facility|campus|site|dc|colo|colocation)\b.*$/i, "").trim());
+}
+
+function addressFromProjectSite(block) {
+  const lines = String(block || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  const streetIndex = lines.findIndex((line) => /^\d{1,6}\s+/.test(line));
+  if (streetIndex < 0) return null;
+  const cityLine = lines.slice(streetIndex + 1).find((line) => /,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?/i.test(line));
+  return cityLine ? `${lines[streetIndex]}, ${cityLine}` : lines[streetIndex];
+}
+
+function locationFromAddress(value) {
+  const match = /,\s*([A-Z][A-Za-z.' -]+),\s*([A-Z]{2})\s+\d{5}(?:-\d{4})?(?:,\s*(USA|US|United States))?/i.exec(String(value || ""));
+  if (!match) return null;
+  return { city: match[1].trim(), region: match[2].toUpperCase(), country: match[3] ? "US" : null };
+}
+
+function fallbackLocation(text) {
+  if (/ashburn/i.test(text)) return ["Ashburn", "VA"];
+  if (/phoenix/i.test(text)) return ["Phoenix", "AZ"];
+  if (/washington|dc/i.test(text)) return ["Washington", "DC"];
+  if (/chicago/i.test(text)) return ["Chicago", "IL"];
+  return [null, null];
+}
+
+function rackCountFromText(text) {
+  const match = /(\d[\d,]*)\s*(?:server\s+)?(?:racks?|cabinets?)/i.exec(text);
+  return match ? numberFromQuantity(match[1]) : null;
+}
+
+function assetHints(text) {
+  const source = String(text || "");
+  const assets = [];
+  addAsset(assets, /(\d[\d,]*)\s+server racks?/i, source, (count) => `${count} server racks`);
+  addAsset(assets, /(\d[\d,]*)\s+servers\b/i, source, (count) => `${count} servers`);
+  addAsset(assets, /(\d[\d,]*)\s+storage arrays?/i, source, (count) => `${count} storage arrays`);
+  addAsset(assets, /(\d[\d,]*)\s+network devices?/i, source, (count) => `${count} network devices`);
+  addAsset(assets, /(one|two|three|four|five|six|seven|eight|nine|ten|\d[\d,]*)\s+in-row cooling units?/i, source, (count) => `${count} in-row cooling units`);
+  addAsset(assets, /(\d[\d,]*)\s*kVA\s+UPS/i, source, (count) => `${count} kVA UPS system`);
+  addAsset(assets, /(\d[\d,]*)\s+battery cabinets?/i, source, (count) => `${count} battery cabinets`);
+  addAsset(assets, /(\d[\d,]*)\s*(?:feet|ft)\s+of\s+[^.\n]*cabling/i, source, (count) => `${count} feet of cabling`);
+  addAsset(assets, /(\d[\d,]*)\s+hard drives?/i, source, (count) => `${count} hard drives for data sanitization`);
+  addAsset(assets, /(\d[\d,]*)\s+solid-state drives?/i, source, (count) => `${count} solid-state drives for data sanitization`);
+  if (/containment panels|hot-aisle containment/i.test(source)) assets.push("hot-aisle containment panels and doors");
+  if (/basket tray|fiber trough|under-floor cabling/i.test(source)) assets.push("basket tray, fiber trough, and under-floor cabling");
+  return mergeUnique(assets).slice(0, 12);
+}
+
+function addAsset(assets, pattern, source, labelFor) {
+  const match = pattern.exec(source);
+  if (!match) return;
+  assets.push(labelFor(numberFromQuantity(match[1] || match[0])));
+}
+
+function numberFromQuantity(value) {
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const normalized = String(value || "").toLowerCase().replace(/,/g, "");
+  return words[normalized] || Number(normalized);
+}
+
+function scopeBulletsFromText(text) {
+  const bullets = String(text || "").split("\n")
+    .map((line) => line.trim().replace(/^\*\s+/, ""))
+    .filter((line) => /^(remove|haul|final|prepare|recycle|remarket|dispose|provide|perform)\b/i.test(line));
+  return bullets.slice(0, 8);
+}
+
+function attachmentHints(text) {
+  const source = String(text || "");
+  return {
+    floorPlan: /floor plan|drawing|layout/i.test(source),
+    equipmentList: /equipment inventory|inventory spreadsheet|asset list|equipment list/i.test(source),
+    sitePhotos: /site photographs|site photos|photos|pictures|images/i.test(source),
+    dockInstructions: /dock|freight elevator|loading/i.test(source),
+    contractorRules: /contractor rules|facility rules/i.test(source),
+    electricalMatrix: /electrical disconnect responsibility matrix|responsibility matrix/i.test(source)
+  };
+}
+
+function accessHints(text) {
+  const pieces = [];
+  const hours = /(?:normal working hours|working hours|access hours)\s+(?:are\s+)?([^.\n]+)/i.exec(text)?.[1];
+  if (hours) pieces.push(`Working hours: ${hours.trim()}`);
+  if (/identification\s+48\s+hours/i.test(text)) pieces.push("Worker identification required 48 hours before arrival");
+  if (/check in at security/i.test(text)) pieces.push("Daily security check-in required");
+  if (/secured loading dock/i.test(text)) pieces.push("Secured loading dock available");
+  const elevator = /freight elevator[^.\n]+/i.exec(text)?.[0];
+  if (elevator) pieces.push(elevator.trim());
+  if (/floor protection/i.test(text)) pieces.push("Floor protection required");
+  return pieces.length ? pieces.join("; ") : null;
+}
+
+function dateNear(text, patterns) {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (match) return dateFrom(match[1] || match[0]);
+  }
+  return null;
+}
+
+function budgetCentsFrom(text) {
+  const match = /\$\s*([\d,]+)(?:\.(\d{2}))?/.exec(text);
+  if (!match) return null;
+  return Number(`${match[1].replace(/,/g, "")}${match[2] || "00"}`);
+}
+
+function mergeUnique(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values.flat().filter(Boolean)) {
+    const cleaned = String(value).trim();
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+  }
+  return result;
 }
 
 function normalizeMissing(items) {

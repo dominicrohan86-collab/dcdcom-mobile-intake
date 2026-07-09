@@ -205,6 +205,80 @@ try {
   assert(preview.body.promptVersionId === "intake_extraction.v2026-07-04", "intake preview should expose the prompt version used");
   assert(preview.body.extraction.company.name === "NTT Data", "intake preview should extract company");
 
+  const structuredInquiryEmail = `From: Marcus Bennett <marcus.bennett@northstarcompute.example>
+
+Hello DCDecom,
+
+NorthStar Compute Services, a regional managed hosting and private-cloud provider, is requesting a formal proposal for the decommissioning of our ORD-2 data center suite.
+
+Primary Contact
+Marcus Bennett, Senior Facilities Manager
+marcus.bennett@northstarcompute.example
+312-555-0196
+Email is preferred for scheduling and proposal questions.
+
+Project Site
+NorthStar ORD-2 Data Center Suite
+1440 West Example Avenue
+Elk Grove Village, IL 60007, USA
+
+The space is a 31,500-square-foot data hall and support area inside a multi-tenant facility. The landlord turnover deadline is November 20, 2026. We need all decommissioning work completed by October 30, 2026.
+
+Requested Scope
+* Remove 72 server racks, including rear-door cooling hardware and rack-mounted PDUs.
+* Remove approximately 310 servers, 58 storage arrays, and 115 network devices.
+* Remove one 750 kVA UPS system and 168 battery cabinets.
+* Remove four in-row cooling units after proper refrigerant recovery.
+* Remove approximately 125,000 feet of copper, fiber, and power cabling.
+
+Data Security
+Approximately 260 hard drives and 140 solid-state drives require on-site NIST 800-88-compliant data sanitization. Drives that fail wiping must be physically shredded.
+
+Electrical Responsibility
+NorthStar's electrical contractor will perform all lockout/tagout and disconnects from building power.
+
+Access and Logistics
+Normal working hours are Monday through Friday, 6:00 AM to 6:00 PM. The site has a secured loading dock that can handle a 48-foot trailer. The freight elevator is rated for 6,500 pounds.
+
+Commercial Information
+Our not-to-exceed budget is $315,000 before any asset-recovery credits. I am the project lead and primary decision maker. Final contract approval will come from Elena Ramirez, Vice President of Operations.
+
+Please provide a formal proposal by August 7, 2026.
+
+Attached:
+1. ORD-2 floor plan
+2. Equipment inventory spreadsheet
+3. Site photographs
+4. Dock and freight elevator instructions
+5. Facility contractor rules
+6. Electrical disconnect responsibility matrix
+
+Thank you,
+
+Marcus Bennett
+Senior Facilities Manager
+NorthStar Compute Services`;
+  const structuredPreview = await request(env, "POST", "/api/ai/intake-preview", {
+    rawText: structuredInquiryEmail,
+    sourceChannel: "email"
+  });
+  assert(structuredPreview.status === 200, "structured intake preview should return 200");
+  const structuredExtraction = structuredPreview.body.extraction;
+  assert(structuredExtraction.company.name === "NorthStar Compute Services", "structured intake should infer company from intro/signature");
+  assert(structuredExtraction.contact.fullName === "Marcus Bennett", "structured intake should infer primary contact");
+  assert(structuredExtraction.contact.email === "marcus.bennett@northstarcompute.example", "structured intake should extract contact email");
+  assert(structuredExtraction.site.fullAddress.includes("1440 West Example Avenue"), "structured intake should preserve full project address");
+  assert(structuredExtraction.site.city === "Elk Grove Village" && structuredExtraction.site.region === "IL", "structured intake should parse city and state");
+  assert(structuredExtraction.equipment.rackCount === 72, "structured intake should extract rack count");
+  assert(structuredExtraction.equipment.assets.some((asset) => asset.includes("310 servers")), "structured intake should extract server quantity");
+  assert(structuredExtraction.equipment.assets.some((asset) => asset.includes("168 battery cabinets")), "structured intake should extract battery cabinets");
+  assert(structuredExtraction.timeline.requestedDueDate === "2026-10-30", "structured intake should use project completion date as requested due date");
+  assert(structuredExtraction.timeline.leaseEndDate === "2026-11-20", "structured intake should extract landlord turnover date");
+  assert(structuredExtraction.estimateRange.highCents === 31500000, "structured intake should use stated budget as upper estimate evidence");
+  const structuredMissingKeys = new Set(structuredExtraction.missingRequirements.map((item) => item.key));
+  assert(!structuredMissingKeys.has("floor_plan"), "structured intake should not ask for attached floor plan");
+  assert(!structuredMissingKeys.has("equipment_list"), "structured intake should not ask for attached inventory");
+
   const saved = await request(env, "POST", "/api/inquiries/from-source", {
     rawText: "Spoke with Tom from NTT Data in Ashburn, VA. Need full decommissioning, 40 racks, cable, HVAC units, proposal, and site visit by July 15.",
     sourceChannel: "phone",
