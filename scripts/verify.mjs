@@ -8,7 +8,7 @@ const serverFiles = [
   "src/server/bootstrap.js", "src/server/contracts.js", "src/server/db.js", "src/server/index.js",
   "src/server/observability.js",
   "src/server/repository.js", "db/drizzle-schema.js", "scripts/build.mjs", "scripts/dev-server.mjs",
-  "scripts/accessibility-check.mjs", "scripts/local-runtime.mjs", "scripts/performance-budget.mjs", "scripts/readiness.mjs", "scripts/release-check.mjs", "scripts/test-api.mjs", "vite.config.js", "drizzle.config.js"
+  "scripts/accessibility-check.mjs", "scripts/local-runtime.mjs", "scripts/performance-budget.mjs", "scripts/readiness.mjs", "scripts/release-check.mjs", "scripts/test-api.mjs", "scripts/test-pwa.mjs", "src/client/lib/pwa.js", "vite.config.js", "drizzle.config.js"
 ];
 for (const file of serverFiles) await run("node", ["--check", file]);
 

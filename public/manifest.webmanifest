@@ -1,0 +1,64 @@
+{
+  "name": "DCDcom Mobile Intake",
+  "short_name": "DCDcom",
+  "description": "Field-ready intake, estimates, proposals, and inquiry workflows for data-center decommissioning teams.",
+  "id": "/?source=pwa",
+  "start_url": "/today?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#f4f6f0",
+  "theme_color": "#f4f6f0",
+  "orientation": "portrait",
+  "categories": ["business", "productivity"],
+  "lang": "en-US",
+  "icons": [
+    {
+      "src": "/icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot.jpeg",
+      "sizes": "1200x750",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "DCDcom Mobile Intake workspace"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Today",
+      "short_name": "Today",
+      "url": "/today?source=pwa-shortcut",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "New Inquiry",
+      "short_name": "New",
+      "url": "/inquiries/new?source=pwa-shortcut",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

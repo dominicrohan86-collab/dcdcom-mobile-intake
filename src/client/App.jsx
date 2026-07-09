@@ -1,8 +1,9 @@
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "./components/Shell";
-import { ActionAlertViewport, EmptyState, Notice } from "./components/ui";
+import { ActionAlertViewport, Button, EmptyState, Notice } from "./components/ui";
 import { client } from "./lib/api";
+import { applyPwaUpdate, registerPwa } from "./lib/pwa";
 import { adaptInquiry } from "./lib/utils";
 import { AddInquiryScreen } from "./screens/AddInquiry";
 import { EmailScreen, ProposalScreen } from "./screens/Composers";
@@ -25,6 +26,7 @@ export function App() {
   const [actionAlerts, setActionAlerts] = React.useState([]);
   const [analysis, setAnalysis] = React.useState(null);
   const [signedOut, setSignedOut] = React.useState(() => isAuthRoute());
+  const [pwaUpdateAvailable, setPwaUpdateAvailable] = React.useState(false);
   const online = useOnlineStatus();
   const bootstrap = useQuery({ queryKey: ["bootstrap"], queryFn: client.bootstrap, enabled: !signedOut });
   const inquiries = bootstrap.data?.inquiries || [];
@@ -101,6 +103,10 @@ export function App() {
   React.useEffect(() => {
     if (selectedId && bootstrap.data?.user?.id) writeLocalValue(`dcdcom:${draftScope}:last-selected-inquiry`, selectedId);
   }, [bootstrap.data?.user?.id, draftScope, selectedId]);
+
+  React.useEffect(() => {
+    registerPwa({ onUpdate: () => setPwaUpdateAvailable(true) });
+  }, []);
 
   React.useEffect(() => {
     const defaultView = bootstrap.data?.preferences?.defaultView || bootstrap.data?.preferences?.default_view;
@@ -242,7 +248,11 @@ export function App() {
   else content = <TodayScreen openWorkflow={openWorkflow} setNotice={setNotice} />;
 
   return <>
-    <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user} openNotification={openNotification} signOut={() => logout.mutate()} signingOut={logout.isPending}>{!online && <div aria-live="polite"><Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice></div>}{content}</Shell>
+    <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user} openNotification={openNotification} signOut={() => logout.mutate()} signingOut={logout.isPending}>
+      {!online && <div aria-live="polite"><Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice></div>}
+      {pwaUpdateAvailable && <div aria-live="polite"><Notice tone="warning"><span className="flex flex-wrap items-center justify-between gap-3"><span className="min-w-0 flex-1">A new version of DCDcom Intake is ready.</span><Button type="button" size="sm" variant="outline" onClick={() => { setPwaUpdateAvailable(false); applyPwaUpdate(); }}>Reload</Button></span></Notice></div>}
+      {content}
+    </Shell>
     <ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} />
   </>;
 }

@@ -10,7 +10,7 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PASSWORD_ALGORITHM = "pbkdf2_sha256";
-const PASSWORD_ITERATIONS = 210_000;
+const PASSWORD_ITERATIONS = 50_000;
 const LOCAL_SESSION_SECRET = "local-development-session-secret";
 const DEMO_LOGIN_EMAIL = "alex@dcdcom.com";
 const DEMO_LOGIN_PASSWORD = "Dcdcom2026!";
@@ -544,8 +544,19 @@ async function ensureDemoPasswordCredential(env, accountId, email, password) {
   const userId = `user_${email.replace(/[^a-z0-9]+/g, "_")}`;
   await db.insert(users).values({ id: userId, accountId, email, fullName: "Alex Morgan", role: "project_manager" }).onConflictDoNothing();
   await db.insert(userPreferences).values({ userId }).onConflictDoNothing();
-  const [credential] = await db.select({ userId: passwordCredentials.userId }).from(passwordCredentials).where(eq(passwordCredentials.userId, userId)).limit(1);
-  if (!credential) await db.insert(passwordCredentials).values({ userId, passwordHash: await hashPassword(demoPassword), passwordAlgorithm: PASSWORD_ALGORITHM });
+  const [credential] = await db.select({ userId: passwordCredentials.userId, passwordHash: passwordCredentials.passwordHash }).from(passwordCredentials).where(eq(passwordCredentials.userId, userId)).limit(1);
+  if (!credential || storedPasswordIterations(credential.passwordHash) > PASSWORD_ITERATIONS) {
+    const passwordHash = await hashPassword(demoPassword);
+    await db.insert(passwordCredentials).values({ userId, passwordHash, passwordAlgorithm: PASSWORD_ALGORITHM }).onConflictDoUpdate({
+      target: passwordCredentials.userId,
+      set: { passwordHash, passwordAlgorithm: PASSWORD_ALGORITHM, passwordUpdatedAt: new Date().toISOString(), mustResetPassword: false, failedAttemptCount: 0, lockedUntil: null, updatedAt: new Date().toISOString() }
+    });
+  }
+}
+
+function storedPasswordIterations(stored) {
+  const [algorithm, iterationsText] = String(stored || "").split("$");
+  return algorithm === PASSWORD_ALGORITHM ? Number(iterationsText || 0) : 0;
 }
 
 async function logAuthEvent(env, accountId, userId, action, metadata = {}) {

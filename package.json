@@ -12,9 +12,10 @@
     "performance:budget": "node --no-warnings scripts/performance-budget.mjs",
     "test:api": "node --no-warnings scripts/test-api.mjs",
     "test:mobile-ui": "node --no-warnings scripts/test-mobile-ui.mjs",
+    "test:pwa": "node --no-warnings scripts/test-pwa.mjs",
     "readiness": "node --no-warnings scripts/readiness.mjs",
     "release:check": "node --no-warnings scripts/release-check.mjs",
-    "verify": "node scripts/verify.mjs && node --no-warnings scripts/test-api.mjs && node --no-warnings scripts/test-mobile-ui.mjs && node --no-warnings scripts/accessibility-check.mjs && node --no-warnings scripts/readiness.mjs && node --no-warnings scripts/release-check.mjs && npm run build && node --no-warnings scripts/performance-budget.mjs"
+    "verify": "node scripts/verify.mjs && node --no-warnings scripts/test-api.mjs && node --no-warnings scripts/test-mobile-ui.mjs && node --no-warnings scripts/test-pwa.mjs && node --no-warnings scripts/accessibility-check.mjs && node --no-warnings scripts/readiness.mjs && node --no-warnings scripts/release-check.mjs && npm run build && node --no-warnings scripts/performance-budget.mjs"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.8.0",
@@ -45,6 +46,7 @@
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.28.1",
     "tailwindcss": "^4.3.1",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "wrangler": "^4.107.1"
   }
 }

@@ -76,6 +76,36 @@ Google Sign-In and Google Calendar use separate callback paths. For sign-in, add
 
 The Worker expects D1 as `DB`, R2 as `FILES`, and static assets as `ASSETS`. Apply Drizzle migrations to D1 before deployment. `npm run build` writes the Vite client to `dist/client`, a bundled Worker to `dist/server/index.js`, and hosting/database metadata under `dist/.openai`.
 
+## Progressive Web App
+
+DCDcom Mobile Intake is installable as a Progressive Web App after it is served from an HTTPS deployment. The production build includes:
+
+- `public/manifest.webmanifest` for app name, launch URL, display mode, shortcuts, screenshots, theme color, and icon metadata.
+- `public/icons/` for Android, iOS, and maskable app icons.
+- `public/sw.js` for conservative app-shell caching, offline navigation fallback, and update activation.
+- A build-time service worker precache list injected by `scripts/build.mjs` so hashed Vite assets are available after the first successful load.
+
+The service worker intentionally does not cache `/api/*` requests. Inquiry data, files, auth state, and other private business data remain server-backed; only the app shell and static assets are cached for launch reliability.
+
+### Install on iPhone
+
+1. Deploy the production build to an HTTPS URL.
+2. Open the URL in Safari on the iPhone.
+3. Tap Share.
+4. Tap Add to Home Screen.
+5. Confirm the name, then tap Add.
+6. Open DCDcom Intake from the new Home Screen icon.
+
+### Install on Android
+
+1. Deploy the production build to an HTTPS URL.
+2. Open the URL in Chrome on the Android phone.
+3. Tap Install app when prompted, or open the browser menu and tap Add to Home screen.
+4. Confirm the install.
+5. Open DCDcom from the app icon.
+
+Run `npm run test:pwa` to verify the source PWA files and `npm run build` to verify the generated service worker contains the current production asset list.
+
 ## Verification Coverage
 
 The API test covers health/readiness, bootstrap, profile and settings updates, live/fallback intake extraction, external inbound intake, inquiry creation, generated and edited proposal versions, proposal review submission, estimates and line items, follow-up delivery queueing, communication history, missing requirements, site visits, checklist completion, file upload/download, integrations, CRM sync, and workflow status changes.

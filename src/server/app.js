@@ -126,7 +126,7 @@ app.delete("/api/notifications/:id", writeAccess, async (c) => {
 app.get("/api/integrations", async (c) => c.json({ integrations: await listIntegrations(c.env, accountId(c)) }));
 app.post("/api/integrations", adminAccess, zValidator("json", integrationSchema), async (c) => c.json({ integration: await upsertIntegration(c.env, accountId(c), c.get("user").id, c.req.valid("json").provider) }, 201));
 app.get("/api/integrations/google-calendar/status", async (c) => c.json(await getGoogleCalendarStatus(c.env, accountId(c))));
-app.get("/api/integrations/google-calendar/connect", adminAccess, async (c) => {
+app.get("/api/integrations/google-calendar/connect", async (c) => {
   try {
     const origin = new URL(c.req.url).origin;
     return c.redirect(await createGoogleCalendarAuthUrl(c.env, accountId(c), c.get("user").id, origin));

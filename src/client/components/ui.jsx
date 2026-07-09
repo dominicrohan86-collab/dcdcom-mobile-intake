@@ -123,7 +123,7 @@ const noticeTones = {
 };
 
 export function Notice({ children, tone = "success" }) {
-  return <p role="status" className={cn("rounded-xl border p-3 text-sm leading-5", noticeTones[tone] || noticeTones.success)}>{children}</p>;
+  return <div role="status" className={cn("rounded-xl border p-3 text-sm leading-5", noticeTones[tone] || noticeTones.success)}>{children}</div>;
 }
 
 const actionAlertTones = {
