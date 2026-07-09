@@ -41,10 +41,10 @@ export function Shell({ screen, navigate, children, title, back, user, openNotif
         })}
       </nav>
 
-      <Button className={cn("mt-4 justify-center", navCollapsed ? "mx-auto size-10 min-h-10 px-0" : "")} size={navCollapsed ? "icon" : "default"} onClick={() => navigate("add")} aria-label="New inquiry" title={navCollapsed ? "New inquiry" : undefined}><Plus size={17} />{!navCollapsed && "New inquiry"}</Button>
+      <Button className={cn("mt-4 justify-center", navCollapsed ? "px-0" : "")} size={navCollapsed ? "icon" : "default"} onClick={() => navigate("add")} aria-label="New inquiry" title={navCollapsed ? "New inquiry" : undefined}><Plus size={17} />{!navCollapsed && "New inquiry"}</Button>
 
       <div className="mt-auto grid gap-3 pt-6">
-        <ThemeToggle theme={theme} toggle={toggle} variant={navCollapsed ? "rail" : "full"} />
+        {/* <ThemeToggle theme={theme} toggle={toggle} variant={navCollapsed ? "rail" : "full"} /> */}
         <div className={cn("flex items-center rounded-xl border border-border bg-surface", navCollapsed ? "justify-center p-2" : "gap-3 p-3")}>
           <span className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-muted text-xs font-black text-brand-muted-foreground">{user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-full rounded-full object-cover" /> : initials}</span>
           <div className={cn("min-w-0", navCollapsed ? "sr-only" : "")}>

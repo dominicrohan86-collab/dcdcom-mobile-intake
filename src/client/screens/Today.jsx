@@ -2,36 +2,37 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Building2, CalendarDays, ChevronLeft, ChevronRight, Clock3, ExternalLink, FileCheck2, Mail, MapPin, RefreshCw } from "lucide-react";
 import { client } from "../lib/api";
-import { Button, EmptyState, Notice } from "../components/ui";
+import { Button, EmptyState } from "../components/ui";
 import { cn } from "../lib/utils";
 
 const eventIcons = { follow_up: Mail, proposal: FileCheck2, site_visit: Building2, google_calendar: CalendarDays };
 
-export function TodayScreen({ openWorkflow }) {
+export function TodayScreen({ openWorkflow, setNotice }) {
   const timezone = React.useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York", []);
   const today = React.useMemo(() => localDateKey(new Date()), []);
   const [selectedDate, setSelectedDate] = React.useState(today);
-  const [calendarNotice, setCalendarNotice] = React.useState(null);
   const agenda = useQuery({ queryKey: ["today", selectedDate, timezone], queryFn: () => client.today(selectedDate, timezone) });
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const result = params.get("calendar");
     if (!result) return;
     if (result !== "connected") {
-      setCalendarNotice({
-          tone: "error",
-          message: params.get("reason") || "Google Calendar could not be connected.",
-          actionLabel: params.get("actionLabel"),
-          actionUrl: params.get("actionUrl")
-        });
+      setNotice?.({ tone: "error", message: params.get("reason") || "Google Calendar could not be connected." });
     }
     window.history.replaceState({}, "", window.location.pathname);
-  }, []);
+  }, [setNotice]);
+  React.useEffect(() => {
+    if (agenda.error) setNotice?.({ tone: "error", message: `Could not load agenda: ${agenda.error.message}` });
+  }, [agenda.error, setNotice]);
 
   const week = React.useMemo(() => weekDates(selectedDate), [selectedDate]);
   const events = agenda.data?.events || [];
   const actions = agenda.data?.actions || [];
   const calendar = agenda.data?.calendar;
+  const calendarErrorMessage = calendar?.state === "error" ? calendar.error : "";
+  React.useEffect(() => {
+    if (calendarErrorMessage) setNotice?.({ tone: "error", message: calendarErrorMessage });
+  }, [calendarErrorMessage, setNotice]);
   const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
   const scheduleItems = selectedDate === today && events.length ? [...events, { id: "current-time", kind: "current_time", startMinutes: currentMinutes }].sort((a, b) => a.startMinutes - b.startMinutes) : events;
   const isToday = selectedDate === today;
@@ -68,7 +69,7 @@ export function TodayScreen({ openWorkflow }) {
         <h3 id="focus-title" className="flex items-center gap-2 text-base font-bold"><span className="grid size-6 place-items-center rounded-md bg-brand-muted text-brand-muted-foreground"><FileCheck2 size={15} /></span>My Focus</h3>
         <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{actions.length} {actions.length === 1 ? "action" : "actions"}</span>
       </div>
-      {agenda.isLoading ? <FocusLoading /> : agenda.error ? <Notice tone="error">Could not load your focus queue.</Notice> : actions.length ? <div className="grid gap-2.5">
+      {agenda.isLoading ? <FocusLoading /> : agenda.error ? <EmptyState>Focus queue is unavailable.</EmptyState> : actions.length ? <div className="grid gap-2.5">
         {actions.map((action) => <FocusAction key={action.id} action={action} open={() => openWorkflow(action.inquiryId, action.screen)} />)}
       </div> : <EmptyState>No assigned focus work for {shortDate(selectedDate)}.</EmptyState>}
     </section>
@@ -78,12 +79,7 @@ export function TodayScreen({ openWorkflow }) {
         <h3 id="schedule-title" className="flex items-center gap-2 text-base font-bold"><span className="grid size-6 place-items-center rounded-md bg-brand-muted text-brand-muted-foreground"><CalendarDays size={15} /></span>Schedule</h3>
         <div className="flex items-center gap-2"><CalendarStatus calendar={calendar} busy={agenda.isFetching} connect={() => window.location.assign("/api/integrations/google-calendar/connect")} refresh={() => agenda.refetch()} /><span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{events.length} {events.length === 1 ? "event" : "events"}</span></div>
       </div>
-      {calendarNotice && (calendarNotice.actionUrl ? <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300" role="alert">
-        <p>{calendarNotice.message}</p>
-        <a className="mt-2 inline-flex min-h-8 items-center gap-1 font-semibold underline underline-offset-2" href={calendarNotice.actionUrl} target="_blank" rel="noreferrer">{calendarNotice.actionLabel || "Open Google Calendar setup"}<ExternalLink size={14} /></a>
-      </div> : <div className="mb-3"><Notice tone={calendarNotice.tone}>{calendarNotice.message}</Notice></div>)}
-      {calendar?.state === "error" && <CalendarError calendar={calendar} />}
-      {agenda.isLoading ? <ScheduleLoading /> : agenda.error ? <Notice tone="error">Could not load this schedule.</Notice> : events.length ? <div className="relative rounded-2xl border border-border bg-card px-1">
+      {agenda.isLoading ? <ScheduleLoading /> : agenda.error ? <EmptyState>Schedule is unavailable.</EmptyState> : events.length ? <div className="relative rounded-2xl border border-border bg-card px-1">
         <div className="relative divide-y divide-border/70 before:absolute before:bottom-6 before:left-[74px] before:top-6 before:w-px before:bg-border">
           {scheduleItems.map((event) => event.kind === "current_time" ? <CurrentTime key={event.id} minutes={event.startMinutes} /> : <ScheduleEvent key={event.id} event={event} open={() => event.source === "google" ? event.htmlLink && window.open(event.htmlLink, "_blank", "noopener,noreferrer") : openWorkflow(event.inquiryId, event.screen)} />)}
         </div>
@@ -126,15 +122,6 @@ function CalendarStatus({ calendar, busy, connect, refresh }) {
   </button>;
 }
 
-function CalendarError({ calendar }) {
-  return <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300" role="alert">
-    <p className="font-semibold">Google Calendar needs attention</p>
-    <p className="mt-1">{calendar.error}</p>
-    {calendar.lastSyncedAt && <p className="mt-1 text-xs opacity-80">Last successful sync: {dateTimeLabel(calendar.lastSyncedAt)}</p>}
-    {calendar.actionUrl && <a className="mt-2 inline-flex min-h-8 items-center gap-1 font-semibold underline underline-offset-2" href={calendar.actionUrl} target={calendar.actionUrl.startsWith("/") ? undefined : "_blank"} rel={calendar.actionUrl.startsWith("/") ? undefined : "noreferrer"}>{calendar.actionLabel || "Open Google Calendar setup"}<ExternalLink size={14} /></a>}
-  </div>;
-}
-
 function CurrentTime({ minutes }) {
   return <div className="relative z-20 grid h-7 grid-cols-[56px_1fr] items-center gap-2 px-2" aria-label={`Current time ${timeLabel(minutes)}`}><time className="font-mono text-[11px] font-bold text-brand">{timeLabel(minutes)}</time><span className="relative h-px bg-brand/50 before:absolute before:-left-1 before:-top-[3px] before:size-2 before:rounded-full before:bg-brand" /></div>;
 }
@@ -146,5 +133,4 @@ function weekDates(value) { const anchor = new Date(`${value}T12:00:00`); const 
 function longDate(value) { return new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date(`${value}T12:00:00`)); }
 function shortDate(value) { return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(`${value}T12:00:00`)); }
 function timeLabel(minutes) { const hour = Math.floor(minutes / 60); const minute = minutes % 60; return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(2000, 0, 1, hour, minute)); }
-function dateTimeLabel(value) { return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
 function shiftDate(value, days) { const date = new Date(`${value}T12:00:00`); date.setDate(date.getDate() + days); return localDateKey(date); }

@@ -3,13 +3,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { ImagePlus, Sparkles, X } from "lucide-react";
-import { Badge, Button, Card, Field, Notice, Tabs, Textarea } from "../components/ui";
+import { Badge, Button, Card, Field, Tabs, Textarea } from "../components/ui";
 
 const intakeSchema = z.object({ notes: z.string().trim().min(20, "Add at least 20 characters of customer context.").max(40_000) });
 const channels = ["Call Notes", "Email", "Manual"];
 const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
 
-export function AddInquiryScreen({ create, busy, result, error, draftScope = "workspace:user" }) {
+export function AddInquiryScreen({ create, busy, result, error, setNotice, draftScope = "workspace:user" }) {
   const draftKey = `dcdcom:${draftScope}:intake-draft`;
   const savedDraft = readDraft(draftKey);
   const [channel, setChannel] = React.useState(savedDraft.channel || "Call Notes");
@@ -23,6 +23,12 @@ export function AddInquiryScreen({ create, busy, result, error, draftScope = "wo
   const payload = (values) => ({ rawText: values.notes, sourceChannel: sourceFor(channel), subject: `${channel} intake`, sender: "Customer" });
   React.useEffect(() => writeDraft(draftKey, { channel, notes }), [draftKey, channel, notes]);
   React.useEffect(() => { if (result?.id) removeDraft(draftKey); }, [draftKey, result?.id]);
+  React.useEffect(() => {
+    if (error) setNotice?.({ tone: "error", message: error });
+  }, [error, setNotice]);
+  React.useEffect(() => {
+    if (photoError) setNotice?.({ tone: "error", message: photoError });
+  }, [photoError, setNotice]);
 
   function addPhotos(selectedFiles) {
     const selected = Array.from(selectedFiles || []);
@@ -39,11 +45,10 @@ export function AddInquiryScreen({ create, busy, result, error, draftScope = "wo
     <form className="mt-4 grid gap-3" onSubmit={handleSubmit((values) => create({ ...payload(values), photos }))}>
       <Field label={channel === "Email" ? "Paste customer email" : "Customer notes"} error={errors.notes?.message}><Textarea {...register("notes")} placeholder="Paste or type the customer request, project location, timing, scope, and contact details." /></Field>
       <div className="flex justify-between text-xs text-muted-foreground"><span>AI will structure the information into an inquiry.</span><span>{notes.length}/40,000</span></div>
-      <PhotoPicker photos={photos} error={photoError} add={addPhotos} remove={(index) => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
+      <PhotoPicker photos={photos} add={addPhotos} remove={(index) => setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
       <Button type="submit" disabled={busy || notes.trim().length < 20}><Sparkles size={17} />{busy ? "Generating..." : "Generate inquiry"}</Button>
     </form>
     {result?.preview && <Card className="mt-4 p-3"><div className="mb-3 flex items-center justify-between"><h3 className="font-bold">Extraction preview</h3><Badge tone={result.preview.confidence > 80 ? "green" : "amber"}>{result.preview.confidence}% confidence</Badge></div><dl className="grid gap-2">{result.preview.rows.map((row) => <div key={row.label} className="grid grid-cols-[104px_minmax(0,1fr)] gap-2 border-t border-slate-100 pt-2 text-sm"><dt className="font-semibold text-slate-500">{row.label}</dt><dd className="min-w-0 break-words">{row.value}</dd></div>)}</dl></Card>}
-    {error && <div className="mt-3"><Notice tone="error">{error}</Notice></div>}
   </>;
 }
 
@@ -51,7 +56,7 @@ function sourceFor(channel) {
   return { "Call Notes": "phone", Email: "email", Manual: "manual" }[channel];
 }
 
-function PhotoPicker({ photos, error, add, remove }) {
+function PhotoPicker({ photos, add, remove }) {
   const previews = React.useMemo(() => photos.map((file) => ({ file, url: URL.createObjectURL(file) })), [photos]);
   React.useEffect(() => () => previews.forEach(({ url }) => URL.revokeObjectURL(url)), [previews]);
 
@@ -67,7 +72,6 @@ function PhotoPicker({ photos, error, add, remove }) {
       <img src={url} alt={file.name} className="aspect-square w-full object-cover" />
       <button type="button" onClick={() => remove(index)} className="absolute right-1 top-1 grid size-7 place-items-center rounded-full bg-slate-950/80 text-white shadow-sm" aria-label={`Remove ${file.name}`} title="Remove photo"><X size={14} /></button>
     </div>)}</div>}
-    {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
   </section>;
 }
 

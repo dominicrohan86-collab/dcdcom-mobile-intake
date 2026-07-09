@@ -2,7 +2,7 @@ import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Bell, CheckCheck, ChevronRight, CircleAlert, CircleCheck, Info, X } from "lucide-react";
 import { client } from "../lib/api";
-import { Button, EmptyState, Notice } from "./ui";
+import { Button, EmptyState } from "./ui";
 import { cn } from "../lib/utils";
 
 const severityIcons = { success: CircleCheck, warning: CircleAlert, error: CircleAlert, info: Info };
@@ -48,7 +48,7 @@ export function NotificationBell({ openNotification }) {
         </div>
       </div>
       {query.isLoading ? <div className="grid gap-2 p-3">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-lg bg-muted" />)}</div>
-        : query.error ? <div className="p-3"><Notice tone="error">Could not load notifications.</Notice></div>
+        : query.error ? <div className="p-3"><EmptyState>Notifications are unavailable.</EmptyState></div>
         : notifications.length ? <div className="max-h-[calc(min(520px,100dvh-96px)-62px)] overflow-y-auto sm:max-h-[470px]">
           {notifications.map((notification) => <NotificationRow key={notification.id} notification={notification} open={() => openItem(notification)} dismiss={() => dismiss.mutate(notification.id)} busy={dismiss.isPending && dismiss.variables === notification.id} />)}
         </div>

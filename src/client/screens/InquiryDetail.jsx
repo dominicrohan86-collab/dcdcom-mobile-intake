@@ -1,16 +1,16 @@
 import React from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
-import { AlertTriangle, Bell, BellOff, CalendarDays, Check, CheckCircle2, ExternalLink, Eye, FileImage, FileText, Mail, MapPin, MessageSquare, Paperclip, Phone, Sparkles, Trash2, Upload, UserRound, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, CalendarDays, Check, ExternalLink, Eye, FileImage, FileText, Mail, MapPin, MessageSquare, Paperclip, Phone, Sparkles, Trash2, Upload, UserRound, X } from "lucide-react";
 import { client } from "../lib/api";
-import { AccordionSection, Badge, Button, Dialog, EmptyState, Field, Input, Notice, Select, Textarea } from "../components/ui";
+import { AccordionSection, Badge, Button, Dialog, EmptyState, Field, Input, Select, Textarea } from "../components/ui";
 import { adaptInquiry, cn, communicationTones, requirementTones, stageLabels, stageTones } from "../lib/utils";
 
 const requirementOptions = [["open", "Open"], ["requested", "Requested"], ["received", "Received"], ["waived", "Waived"]];
 const fileCategoryOptions = [["other", "Document"], ["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Attachment"]];
 const primaryDetailFieldKeys = new Set(["company_name", "contact_name", "contact_email", "contact_phone"]);
 
-export function InquiryDetailScreen({ detail, user, navigate, openDocument: openSavedDocument, notice, setNotice, onDeleted }) {
+export function InquiryDetailScreen({ detail, user, navigate, openDocument: openSavedDocument, setNotice, onDeleted }) {
   const queryClient = useQueryClient();
   const item = adaptInquiry(detail.inquiry);
   const [editing, setEditing] = React.useState(false);
@@ -21,8 +21,6 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
   const [noteOpen, setNoteOpen] = React.useState(false);
   const [watchersOpen, setWatchersOpen] = React.useState(false);
   const [noteBody, setNoteBody] = React.useState("");
-  const canAssignOwner = ["admin", "project_manager"].includes(user?.role);
-  const accountUsers = useQuery({ queryKey: ["admin", "users"], queryFn: client.adminUsers, enabled: canAssignOwner });
   const fields = detail.fields || [];
   const missing = detail.missing || [];
   const documents = detail.documents || [];
@@ -34,6 +32,7 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
   const capturedLease = item.lease_end_date || fields.find((field) => field.field_key?.includes("lease"))?.value_text || "Missing";
   const fullAddress = navigableAddress(item, fields);
   const mapsUrl = fullAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}` : "";
+  const canDeleteInquiry = Boolean(item.owner_user_id && user?.id && String(item.owner_user_id) === String(user.id));
 
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["inquiry", item.id] }),
@@ -41,7 +40,6 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
   ]);
   const requirementMutation = useMutation({ mutationFn: ({ id, status }) => client.updateRequirement(id, status), onSuccess: refresh });
   const detailsMutation = useMutation({ mutationFn: (values) => client.updateDetails(item.id, { ...values, expectedUpdatedAt: item.updated_at }), onSuccess: () => { setEditing(false); setNotice("Inquiry details updated."); refresh(); } });
-  const ownerMutation = useMutation({ mutationFn: (ownerUserId) => client.updateOwner(item.id, ownerUserId || null, item.updated_at), onSuccess: async () => { setNotice("Inquiry owner updated."); await refresh(); queryClient.invalidateQueries({ queryKey: ["inquiries"] }); } });
   const noteMutation = useMutation({
     mutationFn: () => client.logCommunication(item.id, { direction: "inbound", channel: "internal_note", subject: "Internal note", body: noteBody, status: "logged" }),
     onSuccess: async () => { setNoteOpen(false); setNoteBody(""); setNotice("Internal note saved."); await refresh(); }
@@ -82,59 +80,57 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
     setUploadOpen(true);
   }
 
-  const pageError = requirementMutation.error || uploadMutation.error || fileDeleteMutation.error || detailsMutation.error || ownerMutation.error || noteMutation.error || commentMutation.error || watchMutation.error || deleteMutation.error;
+  const pageError = requirementMutation.error || uploadMutation.error || fileDeleteMutation.error || detailsMutation.error || noteMutation.error || commentMutation.error || watchMutation.error || deleteMutation.error;
+  const pageErrorMessage = pageError?.message ? String(pageError.message) : "";
+  React.useEffect(() => {
+    if (pageErrorMessage) setNotice?.({ tone: "error", message: pageErrorMessage });
+  }, [pageErrorMessage, setNotice]);
 
   return <>
-    <header className="-mx-4 -mt-4 border-b border-border bg-card px-4 pb-4 pt-4 text-card-foreground lg:-mx-8 lg:px-8">
+    <header className="-mx-4 -mt-4 border-b border-[#2f4826] bg-[linear-gradient(135deg,#173315_0%,#102411_58%,#0d1b0d_100%)] px-4 pb-4 pt-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] lg:-mx-8 lg:px-8">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
         <div className="min-w-0">
-          <h2 className="text-2xl font-bold leading-tight text-foreground">{item.title}</h2>
+          <h2 className="text-2xl font-bold leading-tight text-white">{item.title}</h2>
           <div className="mt-2 flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-            <span className="min-w-0 truncate font-semibold text-muted-foreground">{item.service}</span>
-            <span className="size-1 rounded-full bg-border-strong" aria-hidden="true" />
-            <Badge tone={stageTones[item.status] || "slate"}>{stageLabels[item.status] || "New"}</Badge>
+            <span className="min-w-0 truncate font-semibold text-white/70">{item.service}</span>
+            <span className="size-1 rounded-full bg-white/25" aria-hidden="true" />
+            <Badge tone={stageTones[item.status] || "slate"} className="border-white/10 bg-white/10 text-white/[0.72]">{stageLabels[item.status] || "New"}</Badge>
             <span className={cn("inline-flex min-h-6 items-center gap-1 rounded-md border px-2 font-semibold", prioritySummaryClass(item.priority))}><AlertTriangle size={13} />{item.priorityLabel} / {item.workloadLabel}</span>
           </div>
         </div>
-        <WatchersButton detail={detail} open={() => setWatchersOpen(true)} />
+        <div className="flex items-center gap-2">
+          <WatchersButton detail={detail} open={() => setWatchersOpen(true)} surface="dark" />
+          {canDeleteInquiry && <HeaderIconButton icon={Trash2} label="Delete inquiry" onClick={() => setDeleteOpen(true)} tone="danger" />}
+        </div>
       </div>
 
-      <div className="mt-4 rounded-lg border border-border bg-background/70 p-3">
-        <a href={mapsUrl || undefined} target="_blank" rel="noreferrer" aria-label={fullAddress ? `Open ${fullAddress} in maps` : undefined} className={cn("flex min-w-0 items-start gap-2 rounded-md text-sm font-semibold leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/70", fullAddress ? "hover:text-brand-muted-foreground" : "pointer-events-none text-muted-foreground")}>
-            <MapPin size={18} className="mt-0.5 shrink-0 text-brand-muted-foreground" />
+      <div className="mt-4 rounded-lg border border-[#dbe7d2]/25 bg-[#f4f8ef]/[0.07] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+        <a href={mapsUrl || undefined} target="_blank" rel="noreferrer" aria-label={fullAddress ? `Open ${fullAddress} in maps` : undefined} className={cn("flex min-w-0 items-start gap-2 rounded-md text-sm font-semibold leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring/70", fullAddress ? "text-white hover:text-brand" : "pointer-events-none text-white/55")}>
+            <MapPin size={18} className="mt-0.5 shrink-0 text-brand" />
             <span className="min-w-0 flex-1 break-words">{fullAddress || "Location pending"}</span>
-            {fullAddress && <ExternalLink size={15} className="mt-0.5 shrink-0 text-muted-foreground" />}
+            {fullAddress && <ExternalLink size={15} className="mt-0.5 shrink-0 text-white/60" />}
           </a>
-        <div className="mt-3 grid gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+        <div className="mt-3 grid gap-2 border-t border-white/10 pt-3 text-xs text-white/68">
           <span className="flex min-w-0 items-center gap-1.5"><CalendarDays size={14} className="shrink-0" /><span className="truncate">Lease end: {capturedLease}</span></span>
           {item.site_name && <span className="min-w-0 truncate">Site: {item.site_name}</span>}
           <div className="flex min-w-0 items-center gap-2">
             <UserRound size={14} className="shrink-0" />
-            <span className="min-w-0 truncate"><span className="font-semibold text-foreground">{item.owner_name || "Unassigned"}</span>{item.owner_email ? ` · ${item.owner_email}` : ""}</span>
+            <span className="min-w-0 truncate"><span className="font-semibold text-white">{item.owner_name || "Unassigned"}</span>{item.owner_email ? ` · ${item.owner_email}` : ""}</span>
           </div>
         </div>
-        {canAssignOwner && <div className="mt-3"><Select label="Assign inquiry owner" value={item.owner_user_id || "unassigned"} onValueChange={(value) => ownerMutation.mutate(value === "unassigned" ? null : value)} options={[["unassigned", "Unassigned"], ...(accountUsers.data?.users || []).filter((entry) => entry.isActive !== false).map((entry) => [entry.id, `${entry.fullName || entry.email} (${roleLabel(entry.role)})`])]} disabled={ownerMutation.isPending || accountUsers.isLoading} /></div>}
       </div>
 
       <div className="mt-3 grid grid-cols-3 gap-2" aria-label="Primary inquiry actions">
-        <QuickAction icon={Upload} label="Add docs" onClick={() => openUpload("other")} accent />
-        <QuickAction icon={Mail} label="Follow up" onClick={() => navigate("email")} />
-        <QuickAction icon={FileText} label="Generate" onClick={() => navigate("proposal")} />
+        <QuickAction icon={Upload} label="Add docs" onClick={() => openUpload("other")} accent surface="dark" />
+        <QuickAction icon={Mail} label="Follow up" onClick={() => navigate("email")} surface="dark" />
+        <QuickAction icon={FileText} label="Generate" onClick={() => navigate("proposal")} surface="dark" />
       </div>
     </header>
 
     <WorkflowGuidance item={item} missing={missing} files={files} documents={documents} communications={communications} navigate={navigate} addFiles={openUpload} />
 
-    <AccordionSection value="files" title="Files & site evidence" meta={`${files.length} ${files.length === 1 ? "file" : "files"}`} icon={<Paperclip size={17} />}>
-      <FileEvidence files={files} addFiles={() => openUpload("other")} deleteFile={setFileToDelete} deletingFileId={fileDeleteMutation.variables} />
-    </AccordionSection>
-
     <AccordionSection value="summary" title="AI summary" meta="Latest" icon={<Sparkles size={17} />}>
       <p className="text-sm leading-6 text-slate-700">{detail.summaries?.[0]?.body || "No summary has been generated yet."}</p>
-    </AccordionSection>
-
-    <AccordionSection value="missing" title="Missing information" meta={`${openMissing} open`}>
-      {missing.length ? <div className="divide-y divide-slate-100">{missing.map((entry) => <div key={entry.id} className="grid grid-cols-[minmax(0,1fr)_116px] items-center gap-3 py-3"><div className="min-w-0"><span className="block text-sm font-medium leading-5">{entry.label}</span><Badge tone={requirementTones[entry.status] || "slate"} className="mt-1 capitalize">{entry.status}</Badge></div><Select label={`Status for ${entry.label}`} value={entry.status} onValueChange={(status) => requirementMutation.mutate({ id: entry.id, status })} options={requirementOptions} className="min-h-8 px-2 text-xs" /></div>)}</div> : <EmptyState>No missing information.</EmptyState>}
     </AccordionSection>
 
     <AccordionSection value="details" title="Inquiry details" meta="Edit" icon={<FileText size={17} />}>
@@ -142,13 +138,13 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
       <dl className="grid gap-2 text-sm"><DetailRow label="Contact" value={item.contact} /><DetailRow label="Company" value={item.company} /><DetailRow label="Email" value={item.email} /><DetailRow label="Phone" value={item.phone} />{additionalFields.map((field) => <DetailRow key={field.id} label={field.label} value={field.value_text} />)}</dl>
     </AccordionSection>
 
+    <AccordionSection value="files" title="Files & site information" meta={`${files.length} ${files.length === 1 ? "file" : "files"}`} icon={<Paperclip size={17} />}>
+      <FileEvidence files={files} addFiles={() => openUpload("other")} deleteFile={setFileToDelete} deletingFileId={fileDeleteMutation.variables} />
+    </AccordionSection>
+
     <AccordionSection value="communications" title="Communication" meta={`${communications.length} logged`} icon={<Mail size={17} />}>
       <div className="mb-3 grid grid-cols-2 gap-2"><Button variant="outline" size="sm" onClick={() => navigate("email")}>New follow-up</Button><Button variant="outline" size="sm" onClick={() => setNoteOpen(true)}>Add internal note</Button></div>
       {communications.length ? <div className="divide-y divide-slate-100">{communications.slice(0, 5).map((communication) => <div key={communication.id} className="grid grid-cols-[30px_minmax(0,1fr)_auto] items-center gap-2 py-2.5"><span className="grid size-7 place-items-center rounded-md bg-slate-100 text-slate-600">{communication.channel === "phone" ? <Phone size={14} /> : <Mail size={14} />}</span><div className="min-w-0"><b className="block text-xs capitalize">{communication.direction} {communication.channel}</b><span className="block truncate text-xs text-slate-500">{communication.subject || communication.body}</span></div><Badge tone={communicationTones[communication.status] || "slate"} className="capitalize">{communication.status}</Badge></div>)}</div> : <EmptyState>No communication recorded yet.</EmptyState>}
-    </AccordionSection>
-
-    <AccordionSection value="comments" title="Comments & mentions" meta={`${comments.length} ${comments.length === 1 ? "comment" : "comments"}`} icon={<MessageSquare size={17} />}>
-      <CommentThread comments={comments} busy={commentMutation.isPending} submit={(body) => commentMutation.mutate(body)} />
     </AccordionSection>
 
     <AccordionSection value="work" title="Saved work" meta={`${documents.length} saved`} icon={<FileText size={17} />}>
@@ -157,37 +153,45 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
       {documents.length > 6 && <Button variant="ghost" size="sm" className="mt-2" onClick={() => navigate("docs")}>View all saved work</Button>}
     </AccordionSection>
 
-    <AccordionSection value="delete" title="Delete inquiry" meta="Permanent" icon={<Trash2 size={17} />}>
-      <p className="mb-3 text-sm leading-5 text-slate-600">Remove this inquiry and everything linked to it, including files, communications, generated work, estimates, and site visits.</p>
-      <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 size={15} />Delete inquiry</Button>
+    <AccordionSection value="comments" title="Comments & mentions" meta={`${comments.length} ${comments.length === 1 ? "comment" : "comments"}`} icon={<MessageSquare size={17} />}>
+      <CommentThread comments={comments} busy={commentMutation.isPending} submit={(body) => commentMutation.mutate(body)} />
     </AccordionSection>
 
-    {notice && <div className="mt-4"><Notice>{notice}</Notice></div>}
-    {pageError && <div className="mt-3"><Notice tone="error">{String(pageError.message)}</Notice></div>}
+    <AccordionSection value="missing" title="Missing information" meta={`${openMissing} open`}>
+      {missing.length ? <div className="divide-y divide-slate-100">{missing.map((entry) => <div key={entry.id} className="grid grid-cols-[minmax(0,1fr)_116px] items-center gap-3 py-3"><div className="min-w-0"><span className="block text-sm font-medium leading-5">{entry.label}</span><Badge tone={requirementTones[entry.status] || "slate"} className="mt-1 capitalize">{entry.status}</Badge></div><Select label={`Status for ${entry.label}`} value={entry.status} onValueChange={(status) => requirementMutation.mutate({ id: entry.id, status })} options={requirementOptions} className="min-h-8 px-2 text-xs" /></div>)}</div> : <EmptyState>No missing information.</EmptyState>}
+    </AccordionSection>
 
     <Dialog open={editing} onOpenChange={setEditing} title="Edit inquiry details"><DetailsForm item={item} fields={fields} busy={detailsMutation.isPending} submit={(values) => detailsMutation.mutate(values)} /></Dialog>
     <Dialog open={watchersOpen} onOpenChange={setWatchersOpen} title="Watchers" description={`${Number(detail.watcher_count ?? detail.watchers?.length ?? 0)} ${Number(detail.watcher_count ?? detail.watchers?.length ?? 0) === 1 ? "person is" : "people are"} watching this inquiry.`}>
       <WatchersDialog detail={detail} busy={watchMutation.isPending} toggleWatch={() => watchMutation.mutate()} />
     </Dialog>
     <Dialog open={noteOpen} onOpenChange={setNoteOpen} title="Add internal note"><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); noteMutation.mutate(); }}><Field label="Note"><Input value={noteBody} onChange={(event) => setNoteBody(event.target.value)} placeholder="Customer prefers early access window" /></Field><Button type="submit" disabled={noteMutation.isPending || !noteBody.trim()}>{noteMutation.isPending ? "Saving..." : "Save note"}</Button></form></Dialog>
-    <Dialog open={uploadOpen} onOpenChange={setUploadOpen} title="Upload source documents" description="Add the files AI should reference before drafting estimates, scopes, proposals, or checklists."><UploadFiles busy={uploadMutation.isPending} initialCategory={uploadPreset} submit={(queuedFiles) => uploadMutation.mutate(queuedFiles)} /></Dialog>
+    <Dialog open={uploadOpen} onOpenChange={setUploadOpen} title="Upload source documents" description="Add the files AI should reference before drafting estimates, scopes, proposals, or checklists."><UploadFiles busy={uploadMutation.isPending} initialCategory={uploadPreset} notify={setNotice} submit={(queuedFiles) => uploadMutation.mutate(queuedFiles)} /></Dialog>
     <Dialog open={Boolean(fileToDelete)} onOpenChange={(open) => !open && setFileToDelete(null)} title="Delete file?" description="This file will be permanently removed from this inquiry and storage.">
       <div className="rounded-md border border-red-200 bg-red-50 p-3"><strong className="block truncate text-sm text-red-900">{fileToDelete?.file_name || fileToDelete?.fileName || "Selected file"}</strong><p className="mt-1 text-xs leading-5 text-red-700">This cannot be undone.</p></div>
       <div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={() => setFileToDelete(null)}>Cancel</Button><Button variant="danger" disabled={fileDeleteMutation.isPending} onClick={() => fileDeleteMutation.mutate(fileToDelete.id)}><Trash2 size={16} />{fileDeleteMutation.isPending ? "Deleting..." : "Delete permanently"}</Button></div>
     </Dialog>
-    <Dialog open={deleteOpen} onOpenChange={setDeleteOpen} title="Delete inquiry?" description="This action cannot be undone.">
+    <Dialog open={canDeleteInquiry && deleteOpen} onOpenChange={setDeleteOpen} title="Delete inquiry?" description="This action cannot be undone.">
       <div className="rounded-md border border-red-200 bg-red-50 p-3"><strong className="block text-sm text-red-900">{item.title}</strong><p className="mt-1 text-xs leading-5 text-red-700">All attached files and related records will be permanently deleted.</p></div>
       <div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button><Button variant="danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}><Trash2 size={16} />{deleteMutation.isPending ? "Deleting..." : "Delete permanently"}</Button></div>
     </Dialog>
   </>;
 }
 
-function WatchersButton({ detail, open }) {
+function HeaderIconButton({ icon: Icon, label, onClick, tone = "default" }) {
+  const danger = tone === "danger";
+  return <button type="button" onClick={onClick} aria-label={label} title={label} className={cn("grid size-11 shrink-0 place-items-center rounded-md border shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring/70", danger ? "border-red-300/20 bg-red-400/10 text-red-100/80 hover:border-red-300/35 hover:bg-red-400/15 hover:text-red-50" : "border-white/20 bg-white/10 text-white/78 hover:bg-white/15 hover:text-white")}>
+    <Icon size={19} />
+  </button>;
+}
+
+function WatchersButton({ detail, open, surface = "light" }) {
   const watchers = detail.watchers || [];
   const count = Number(detail.watcher_count ?? watchers.length);
-  return <button type="button" onClick={open} aria-label={`${count} ${count === 1 ? "watcher" : "watchers"}`} className="relative grid size-11 shrink-0 place-items-center rounded-md border border-border bg-background text-muted-foreground shadow-sm outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70">
+  const dark = surface === "dark";
+  return <button type="button" onClick={open} aria-label={`${count} ${count === 1 ? "watcher" : "watchers"}`} className={cn("relative grid size-11 shrink-0 place-items-center rounded-md border shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring/70", dark ? "border-white/20 bg-white/10 text-white/78 hover:bg-white/15 hover:text-white" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground")}>
     <Eye size={20} />
-    <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full border border-card bg-brand px-1 text-[11px] font-black leading-5 text-brand-foreground">{count}</span>
+    <span className={cn("absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full border bg-brand px-1 text-[11px] font-black leading-5 text-brand-foreground", dark ? "border-[#102411]" : "border-card")}>{count}</span>
   </button>;
 }
 
@@ -241,23 +245,6 @@ function CommentThread({ comments, busy, submit }) {
   </div>;
 }
 
-function OwnerPanel({ item, users, canAssign, busy, updateOwner, surface = "light" }) {
-  const ownerName = item.owner_name || "Unassigned";
-  const options = [["unassigned", "Unassigned"], ...users.filter((entry) => entry.isActive !== false).map((entry) => [entry.id, `${entry.fullName || entry.email} (${roleLabel(entry.role)})`])];
-  const dark = surface === "dark";
-  return <section className={cn("rounded-md border p-3", dark ? "border-white/25 bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]" : "mt-3 border-slate-200 bg-white")}>
-    <div className="flex items-start gap-3">
-      <span className={cn("grid size-9 shrink-0 place-items-center rounded-full", dark ? "bg-brand-100 text-brand-800" : "bg-brand-50 text-brand-700")}><UserRound size={18} /></span>
-      <div className="min-w-0 flex-1">
-        <p className={cn("text-xs font-semibold uppercase", dark ? "text-slate-300" : "text-slate-500")}>Owner</p>
-        <p className={cn("mt-0.5 truncate text-sm font-bold", dark ? "text-white" : "text-slate-950")}>{ownerName}</p>
-        {item.owner_email && <p className={cn("truncate text-xs", dark ? "text-slate-200" : "text-slate-500")}>{item.owner_email}</p>}
-      </div>
-    </div>
-    {canAssign && <div className="mt-3"><Select label="Assign inquiry owner" value={item.owner_user_id || "unassigned"} onValueChange={(value) => updateOwner(value === "unassigned" ? null : value)} options={options} disabled={busy} /></div>}
-  </section>;
-}
-
 function WorkflowGuidance({ item, missing, files, documents, communications, navigate, addFiles }) {
   const sourceFiles = files.filter((file) => file.category !== "document_export");
   const evidenceChecks = [
@@ -286,24 +273,19 @@ function WorkflowGuidance({ item, missing, files, documents, communications, nav
     else navigate(action.target);
   }
 
-  return <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm" aria-labelledby="workflow-guidance-title">
-    <div className="flex items-start justify-between gap-3">
+  return <section className="mt-3 rounded-lg border border-border bg-card px-3 py-2.5 text-card-foreground shadow-sm" aria-labelledby="workflow-guidance-title">
+    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="min-w-0">
-        <p id="workflow-guidance-title" className="text-sm font-bold text-slate-950">Recommended next step</p>
-        <h3 className="mt-1 text-lg font-bold leading-tight text-slate-950">{action.title}</h3>
-        <p className="mt-1 text-sm leading-5 text-slate-600">{action.detail}</p>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <p id="workflow-guidance-title" className="text-xs font-bold uppercase tracking-[0.08em] text-muted-foreground">Next step</p>
+          <Badge tone={completeCount >= steps.length - 1 ? "green" : completeCount >= 3 ? "blue" : "amber"}>{completeCount}/{steps.length} ready</Badge>
+        </div>
+        <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <h3 className="truncate text-sm font-bold leading-tight text-foreground">{action.title}</h3>
+          <p className="hidden min-w-0 flex-1 truncate text-sm text-muted-foreground md:block">{action.detail}</p>
+        </div>
       </div>
-      <Badge tone={completeCount >= steps.length - 1 ? "green" : completeCount >= 3 ? "blue" : "amber"} className="shrink-0">{completeCount}/{steps.length} ready</Badge>
-    </div>
-    <div className="mt-3 grid gap-2">
-      {steps.map(([label, done]) => <div key={label} className="grid grid-cols-[18px_minmax(0,1fr)] items-center gap-2 text-xs">
-        {done ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertTriangle size={16} className="text-amber-600" />}
-        <span className={done ? "text-slate-600" : "font-medium text-slate-900"}>{label}</span>
-      </div>)}
-    </div>
-    <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-      <Button size="sm" onClick={runAction}>{action.buttonLabel}</Button>
-      {action.target !== "docs" && <Button size="sm" variant="outline" onClick={() => navigate("docs")}>Docs</Button>}
+      <Button size="sm" variant="outline" onClick={runAction} className="w-full sm:w-auto">{action.buttonLabel}</Button>
     </div>
   </section>;
 }
@@ -361,30 +343,36 @@ function nextWorkflowAction({ sourceFiles, openMissing, hasOutbound, hasDraft, h
 }
 
 function FileEvidence({ files, addFiles, deleteFile, deletingFileId }) {
-  const photos = files.filter((file) => String(file.content_type || "").startsWith("image/"));
-  const documents = files.filter((file) => !String(file.content_type || "").startsWith("image/"));
   return <div>
-    {photos.length > 0 && <div className="mb-3 grid grid-cols-2 gap-2">{photos.map((file) => <div key={file.id} className="group relative overflow-hidden rounded-md border border-slate-200 bg-slate-50">
-      <a href={`/api/files/${file.id}`} target="_blank" rel="noreferrer" className="block">
-        <img src={thumbnailUrl(file) || `/api/files/${file.id}`} alt={file.file_name} className="aspect-[4/3] w-full object-cover" />
-        <span className="block truncate px-2 py-1.5 pr-8 text-xs text-slate-600">{file.file_name}</span>
-      </a>
-      <DeleteFileButton file={file} deleteFile={deleteFile} disabled={deletingFileId === file.id} className="absolute right-1.5 top-1.5" />
-    </div>)}</div>}
-    {documents.length > 0 && <div className="divide-y divide-slate-100">{documents.map((file) => <div key={file.id} className="group relative">
-      <a className="flex min-h-10 items-center gap-2 py-2 pr-9 text-sm text-blue-700" href={`/api/files/${file.id}`} target="_blank" rel="noreferrer">
-        <FileText size={17} className="shrink-0 text-slate-500" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate">{file.file_name}</span>
-          {file.content_hash && <span className="block truncate text-[11px] font-medium text-slate-400">SHA-256 {shortHash(file.content_hash)}</span>}
-        </span>
-        <span className="text-xs capitalize text-slate-400">{String(file.category || "file").replaceAll("_", " ")}</span>
-      </a>
-      <DeleteFileButton file={file} deleteFile={deleteFile} disabled={deletingFileId === file.id} className="absolute right-0 top-1.5" />
-    </div>)}</div>}
+    {files.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{files.map((file) => <FileEvidenceTile key={file.id} file={file} deleteFile={deleteFile} deleting={deletingFileId === file.id} />)}</div>}
     {!files.length && <p className="mb-3 text-sm text-slate-500">No photos or documents have been added yet.</p>}
     <Button variant="outline" size="sm" onClick={addFiles}><Upload size={15} />{files.length ? "Add more files" : "Choose photos or documents"}</Button>
   </div>;
+}
+
+function FileEvidenceTile({ file, deleteFile, deleting }) {
+  const image = isImageFile(file);
+  const preview = image ? `/api/files/${encodeURIComponent(file.id)}` : thumbnailUrl(file);
+  const label = filePreviewLabel(file);
+  const category = fileCategoryLabel(file.category);
+  return <article className="group relative w-[calc(50%-0.25rem)] max-w-[180px] overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm transition hover:border-border-strong hover:shadow-md sm:w-40 lg:w-44">
+    <a href={`/api/files/${encodeURIComponent(file.id)}`} target="_blank" rel="noreferrer" className="block">
+      <span className="grid aspect-[4/3] place-items-center overflow-hidden bg-muted">
+        {preview ? <img src={preview} alt={file.file_name || "Uploaded file"} className="size-full object-cover" /> : <span className="flex size-full items-center justify-center bg-gradient-to-br from-brand-muted to-background p-4">
+          <span className="grid aspect-[3/4] w-14 place-items-center rounded-md border border-border bg-card text-center shadow-sm">
+            <FileText size={24} className="text-brand-muted-foreground" />
+            <span className="mt-1 rounded-sm bg-brand px-1.5 py-0.5 text-[10px] font-black uppercase leading-none text-brand-foreground">{label}</span>
+          </span>
+        </span>}
+      </span>
+      <span className="block min-w-0 px-2.5 py-2">
+        <span className="block truncate text-xs font-bold text-foreground">{file.file_name || "Uploaded file"}</span>
+        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{image ? "Image" : label} - {category}</span>
+        {file.content_hash && <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/70">SHA {shortHash(file.content_hash)}</span>}
+      </span>
+    </a>
+    <DeleteFileButton file={file} deleteFile={deleteFile} disabled={deleting} className="absolute right-1.5 top-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
+  </article>;
 }
 
 function DeleteFileButton({ file, deleteFile, disabled, className = "" }) {
@@ -405,7 +393,7 @@ function DeleteFileButton({ file, deleteFile, disabled, className = "" }) {
   </button>;
 }
 
-function UploadFiles({ busy, initialCategory = "other", submit }) {
+function UploadFiles({ busy, initialCategory = "other", notify, submit }) {
   const [queue, setQueue] = React.useState([]);
   const [documentCategory, setDocumentCategory] = React.useState(initialCategory);
   const [error, setError] = React.useState("");
@@ -416,6 +404,9 @@ function UploadFiles({ busy, initialCategory = "other", submit }) {
 
   function updateCategory(index, category) { setQueue((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, category } : item)); }
   function remove(index) { setQueue((items) => items.filter((_, itemIndex) => itemIndex !== index)); }
+  React.useEffect(() => {
+    if (error) notify?.({ tone: "error", message: error });
+  }, [error, notify]);
 
   return <div>
     <Field label="Document category" className="mb-3">
@@ -426,7 +417,6 @@ function UploadFiles({ busy, initialCategory = "other", submit }) {
       <div {...documents.getRootProps()}><input {...documents.getInputProps({ "aria-label": "Choose document files" })} /><Button type="button" variant="outline" className="w-full" onClick={documents.open}><FileText size={17} />Document</Button></div>
     </div>
     <p className="mt-2 text-xs text-slate-500">Select multiple files at once. Maximum 12 MB per file.</p>
-    {error && <div className="mt-3"><Notice tone="error">{error}</Notice></div>}
     {queue.length > 0 && <div className="mt-4 divide-y divide-slate-100 border-y border-slate-200">{queue.map((entry, index) => <div key={`${entry.file.name}-${entry.file.lastModified}-${index}`} className="grid grid-cols-[minmax(0,1fr)_120px_32px] items-center gap-2 py-2"><div className="min-w-0"><b className="block truncate text-xs">{entry.file.name}</b><span className="text-[11px] text-slate-500">{formatBytes(entry.file.size)}</span></div>{entry.category === "photo" ? <Badge tone="cyan">Photo</Badge> : <Select label={`Category for ${entry.file.name}`} value={entry.category} onValueChange={(value) => updateCategory(index, value)} options={fileCategoryOptions} className="min-h-8 px-2 text-xs" />}<Button type="button" variant="ghost" size="icon" className="min-h-8 size-8" onClick={() => remove(index)} aria-label={`Remove ${entry.file.name}`}><X size={15} /></Button></div>)}</div>}
     <Button className="mt-4 w-full" disabled={busy || !queue.length} onClick={() => submit(queue)}><Upload size={17} />{busy ? "Uploading..." : `Upload ${queue.length || ""} ${queue.length === 1 ? "file" : "files"}`}</Button>
   </div>;
@@ -435,19 +425,31 @@ function UploadFiles({ busy, initialCategory = "other", submit }) {
 function DetailRow({ label, value }) { return <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-2 border-b border-slate-100 pb-2 last:border-0"><dt className="font-medium text-slate-500">{label}</dt><dd className="min-w-0 break-words">{value || "Missing"}</dd></div>; }
 
 function prioritySummaryClass(priority) {
-  if (priority === "urgent" || priority === "high") return "border-amber-500/35 bg-amber-500/12 text-amber-700 dark:text-amber-300";
-  if (priority === "medium") return "border-brand/25 bg-brand-muted text-brand-muted-foreground";
-  return "border-border bg-muted text-muted-foreground";
+  if (priority === "urgent" || priority === "high") return "border-amber-300/[0.24] bg-amber-300/10 text-amber-200/90";
+  if (priority === "medium") return "border-brand/25 bg-brand/[0.12] text-brand";
+  return "border-white/10 bg-white/10 text-white/68";
 }
 
 function QuickAction({ icon: Icon, label, onClick, accent = false, surface = "light" }) {
   const dark = surface === "dark";
-  return <button type="button" onClick={onClick} className={cn("flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70", accent ? "bg-brand text-brand-foreground shadow-sm hover:bg-brand-strong" : dark ? "border border-white/30 bg-white/15 text-white shadow-sm hover:border-white/45 hover:bg-white/20" : "border border-border bg-background text-foreground hover:bg-muted")}><Icon size={16} className="shrink-0" /><span className="truncate">{label}</span></button>;
+  return <button type="button" onClick={onClick} className={cn("flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70", accent ? "bg-brand text-brand-foreground shadow-sm hover:bg-brand-strong" : dark ? "border border-[#dbe7d2]/35 bg-[#f4f8ef]/[0.12] text-white shadow-sm hover:border-[#dbe7d2]/50 hover:bg-[#f4f8ef]/[0.18]" : "border border-border bg-background text-foreground hover:bg-muted")}><Icon size={16} className="shrink-0" /><span className="truncate">{label}</span></button>;
 }
 function formatBytes(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
-function fileCategoryLabel(value) { return fileCategoryOptions.find(([category]) => category === value)?.[1] || "Document"; }
+function fileCategoryLabel(value) {
+  if (value === "photo") return "Photo";
+  return fileCategoryOptions.find(([category]) => category === value)?.[1] || "Document";
+}
+function isImageFile(file) { return String(file.content_type || file.contentType || "").startsWith("image/"); }
+function filePreviewLabel(file) {
+  const type = String(file.content_type || file.contentType || "").toLowerCase();
+  const name = String(file.file_name || file.fileName || "").toLowerCase();
+  if (type.includes("pdf") || name.endsWith(".pdf")) return "PDF";
+  if (type.includes("spreadsheet") || name.endsWith(".xlsx") || name.endsWith(".csv")) return "XLS";
+  if (type.includes("word") || name.endsWith(".doc") || name.endsWith(".docx")) return "DOC";
+  if (type.includes("text") || name.endsWith(".txt")) return "TXT";
+  return "FILE";
+}
 function photoCategoryForSelection(value) { return value === "other" ? "photo" : value; }
-function roleLabel(role) { return String(role || "user").split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" "); }
 function initials(value = "") { return String(value).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "U"; }
 function navigableAddress(item, fields = []) {
   const extracted = fields.find((field) => field.field_key === "site_address")?.value_text;

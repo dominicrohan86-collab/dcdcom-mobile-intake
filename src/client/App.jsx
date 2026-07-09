@@ -1,7 +1,7 @@
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shell } from "./components/Shell";
-import { EmptyState, Notice } from "./components/ui";
+import { ActionAlertViewport, EmptyState, Notice } from "./components/ui";
 import { client } from "./lib/api";
 import { adaptInquiry } from "./lib/utils";
 import { AddInquiryScreen } from "./screens/AddInquiry";
@@ -22,13 +22,27 @@ export function App() {
   const [history, setHistory] = React.useState([]);
   const [selectedId, setSelectedId] = React.useState(initialRoute.selectedId);
   const [documentToOpen, setDocumentToOpen] = React.useState(null);
-  const [notice, setNotice] = React.useState("");
+  const [actionAlerts, setActionAlerts] = React.useState([]);
   const [analysis, setAnalysis] = React.useState(null);
   const [signedOut, setSignedOut] = React.useState(() => isAuthRoute());
   const online = useOnlineStatus();
   const bootstrap = useQuery({ queryKey: ["bootstrap"], queryFn: client.bootstrap, enabled: !signedOut });
   const inquiries = bootstrap.data?.inquiries || [];
   const draftScope = React.useMemo(() => workspaceDraftScope(bootstrap.data), [bootstrap.data?.accountId, bootstrap.data?.user?.id, bootstrap.data?.user?.email]);
+  const dismissActionAlert = React.useCallback((id) => setActionAlerts((items) => items.filter((alert) => alert.id !== id)), []);
+  const setNotice = React.useCallback((notice, tone = "success") => {
+    const payload = typeof notice === "string" ? { message: notice, tone } : notice;
+    const message = String(payload?.message || "").trim();
+    if (!message) return;
+    const alertTone = payload?.tone || tone;
+    setActionAlerts((items) => [...items.slice(-3), {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      tone: alertTone,
+      title: payload?.title || actionAlertTitle(message, alertTone),
+      message,
+      duration: payload?.duration || 10000
+    }]);
+  }, []);
   const login = useMutation({
     mutationFn: client.login,
     onSuccess: async () => {
@@ -205,26 +219,32 @@ export function App() {
     else pushUrl(nextPath);
   }
 
-  if (signedOut || (bootstrap.error && isUnauthorized(bootstrap.error))) return <LoginScreen login={(payload) => login.mutate(payload)} signup={(payload) => signup.mutate(payload)} resetPassword={(payload) => resetPassword.mutate(payload)} acceptInvite={(payload) => acceptInvite.mutate(payload)} busy={login.isPending || signup.isPending || resetPassword.isPending || acceptInvite.isPending} error={login.error?.message || signup.error?.message || resetPassword.error?.message || acceptInvite.error?.message} />;
-  if (bootstrap.isLoading) return <main className="grid min-h-dvh place-items-center bg-background text-sm text-muted-foreground"><span className="flex items-center gap-2"><span className="size-4 animate-spin rounded-full border-2 border-border border-t-brand" />Loading workspace...</span></main>;
-  if (bootstrap.error) return <main className="grid min-h-dvh place-items-center bg-background p-6"><Notice tone="error">Could not load the workspace: {bootstrap.error.message}</Notice></main>;
+  if (signedOut || (bootstrap.error && isUnauthorized(bootstrap.error))) return <>
+    <LoginScreen login={(payload) => login.mutate(payload)} signup={(payload) => signup.mutate(payload)} resetPassword={(payload) => resetPassword.mutate(payload)} acceptInvite={(payload) => acceptInvite.mutate(payload)} busy={login.isPending || signup.isPending || resetPassword.isPending || acceptInvite.isPending} error={login.error?.message || signup.error?.message || resetPassword.error?.message || acceptInvite.error?.message} notify={setNotice} />
+    <ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} />
+  </>;
+  if (bootstrap.isLoading) return <><main className="grid min-h-dvh place-items-center bg-background text-sm text-muted-foreground"><span className="flex items-center gap-2"><span className="size-4 animate-spin rounded-full border-2 border-border border-t-brand" />Loading workspace...</span></main><ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} /></>;
+  if (bootstrap.error) return <><main className="grid min-h-dvh place-items-center bg-background p-6"><EmptyState>Could not load the workspace: {bootstrap.error.message}</EmptyState></main><ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} /></>;
 
   const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Documents" };
   const hasBack = ["add", "detail", "email", "proposal"].includes(screen);
   let content;
 
-  if (screen === "today") content = <TodayScreen openWorkflow={openWorkflow} />;
-  else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} notice={notice} savedViews={bootstrap.data.personalization?.savedViews || []} />;
-  else if (screen === "add") content = <AddInquiryScreen create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} draftScope={draftScope} />;
-  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} selectedId={selectedId} notice={notice} setNotice={setNotice} />;
+  if (screen === "today") content = <TodayScreen openWorkflow={openWorkflow} setNotice={setNotice} />;
+  else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} setNotice={setNotice} savedViews={bootstrap.data.personalization?.savedViews || []} />;
+  else if (screen === "add") content = <AddInquiryScreen create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} setNotice={setNotice} draftScope={draftScope} />;
+  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} selectedId={selectedId} setNotice={setNotice} />;
   else if (detail.isLoading || !detail.data) content = detail.error ? <EmptyState>Could not load this inquiry.</EmptyState> : <DetailLoading />;
-  else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} user={bootstrap.data.user} navigate={go} openDocument={openDocument} notice={notice} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
-  else if (screen === "email") content = <EmailScreen detail={detail.data} notice={notice} setNotice={setNotice} draftScope={draftScope} />;
-  else if (screen === "proposal") content = <ProposalScreen detail={detail.data} notice={notice} setNotice={setNotice} draftScope={draftScope} />;
-  else if (screen === "docs") content = <DocsScreen inquiries={inquiries} selectedId={selectedId} selectInquiry={(id) => { setSelectedId(id); replaceUrl(pathForScreen("docs", id)); }} detail={detail.data} navigate={go} initialDocumentId={documentToOpen} onDocumentOpened={() => setDocumentToOpen(null)} />;
-  else content = <TodayScreen openWorkflow={openWorkflow} />;
+  else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} user={bootstrap.data.user} navigate={go} openDocument={openDocument} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
+  else if (screen === "email") content = <EmailScreen detail={detail.data} setNotice={setNotice} draftScope={draftScope} />;
+  else if (screen === "proposal") content = <ProposalScreen detail={detail.data} setNotice={setNotice} draftScope={draftScope} />;
+  else if (screen === "docs") content = <DocsScreen inquiries={inquiries} selectedId={selectedId} selectInquiry={(id) => { setSelectedId(id); replaceUrl(pathForScreen("docs", id)); }} detail={detail.data} navigate={go} initialDocumentId={documentToOpen} onDocumentOpened={() => setDocumentToOpen(null)} notify={setNotice} />;
+  else content = <TodayScreen openWorkflow={openWorkflow} setNotice={setNotice} />;
 
-  return <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user} openNotification={openNotification} signOut={() => logout.mutate()} signingOut={logout.isPending}>{!online && <div aria-live="polite"><Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice></div>}{content}</Shell>;
+  return <>
+    <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user} openNotification={openNotification} signOut={() => logout.mutate()} signingOut={logout.isPending}>{!online && <div aria-live="polite"><Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice></div>}{content}</Shell>
+    <ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} />
+  </>;
 }
 
 function useOnlineStatus() {
@@ -243,6 +263,36 @@ function useOnlineStatus() {
 
 function isUnauthorized(error) {
   return error?.response?.status === 401 || String(error?.message || "").toLowerCase().includes("authentication required");
+}
+
+function actionAlertTitle(message, tone) {
+  const text = String(message || "").toLowerCase();
+  if (tone === "error") {
+    if (text.includes("calendar")) return "Calendar action failed";
+    if (text.includes("notification")) return "Notifications unavailable";
+    if (text.includes("upload") || text.includes("file")) return "File action failed";
+    if (text.includes("generate") || text.includes("draft")) return "Generation failed";
+    if (text.includes("share") || text.includes("link")) return "Share action failed";
+    if (text.includes("password") || text.includes("sign")) return "Authentication failed";
+    return "Action failed";
+  }
+  if (text.includes("watch")) return "Watcher updated";
+  if (text.includes("owner")) return "Owner updated";
+  if (text.includes("detail")) return "Inquiry updated";
+  if (text.includes("inquiry generated")) return "Inquiry generated";
+  if (text.includes("inquiry") && text.includes("deleted")) return "Inquiry deleted";
+  if (text.includes("upload") || text.includes("file") || text.includes("photo")) return "Files updated";
+  if (text.includes("download")) return "Download started";
+  if (text.includes("copied") || text.includes("share")) return "Link copied";
+  if (text.includes("generated")) return "Draft generated";
+  if (text.includes("saved")) return "Saved";
+  if (text.includes("queued")) return "Response queued";
+  if (text.includes("sent")) return "Response sent";
+  if (text.includes("invite")) return "Invite created";
+  if (text.includes("integration")) return "Integration connected";
+  if (text.includes("profile")) return "Profile saved";
+  if (text.includes("password")) return "Password updated";
+  return tone === "warning" ? "Action needs attention" : "Action complete";
 }
 
 function isAuthRoute() {

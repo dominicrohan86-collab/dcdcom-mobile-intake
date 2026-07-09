@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Activity, Archive, ArrowLeft, Bell, Bot, CalendarDays, ChevronRight, CircleHelp, Clock, Download, ExternalLink, Eye, FileImage, FileText, FolderOpen, Image, KeyRound, Link2, Mail, Paperclip, RefreshCw, Search, ServerCog, Share2, ShieldCheck, SlidersHorizontal, Trash2, UserRound } from "lucide-react";
 import { client } from "../lib/api";
-import { Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, Input, Notice, Select } from "../components/ui";
+import { Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, Input, Select } from "../components/ui";
 import { adaptInquiry, cn } from "../lib/utils";
 
 const docFilters = [
@@ -15,7 +15,7 @@ const docFilters = [
   ["recent", "Recent", Clock]
 ];
 
-export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navigate, initialDocumentId, onDocumentOpened }) {
+export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navigate, initialDocumentId, onDocumentOpened, notify }) {
   const documents = detail?.documents || [];
   const files = detail?.files || [];
   const inquiryOptions = inquiries.map((row) => [row.id, adaptInquiry(row).title]);
@@ -24,7 +24,6 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
   const [filter, setFilter] = React.useState("all");
   const [filterOpen, setFilterOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
-  const [notice, setNotice] = React.useState("");
   const [expandedSections, setExpandedSections] = React.useState(() => new Set());
   const assets = React.useMemo(() => [
     ...documents.map((document) => ({ kind: "document", group: "generated", id: document.id, title: document.title || "Untitled document", subtitle: documentTypeLabel(document.document_type), status: document.status, updatedAt: document.updated_at || document.version_created_at, inquiryTitle: inquiry?.title || "Selected inquiry", item: document })),
@@ -66,20 +65,12 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
     if (!initialDocumentId) return;
     const asset = assets.find((entry) => entry.id === initialDocumentId);
     if (asset) {
-      setNotice("");
       setSelected(asset);
       onDocumentOpened?.();
     }
   }, [assets, initialDocumentId, onDocumentOpened]);
 
-  React.useEffect(() => {
-    if (!notice) return undefined;
-    const timeout = window.setTimeout(() => setNotice(""), 2500);
-    return () => window.clearTimeout(timeout);
-  }, [notice]);
-
   function openAsset(asset) {
-    setNotice("");
     setSelected(asset);
   }
 
@@ -93,16 +84,15 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
   }
 
   function backToDocs() {
-    setNotice("");
     setSelected(null);
   }
 
-  if (selected) return <DocumentViewer asset={selected} inquiry={inquiry} navigate={navigate} back={backToDocs} notice={notice} setNotice={setNotice} />;
+  if (selected) return <DocumentViewer asset={selected} inquiry={inquiry} navigate={navigate} back={backToDocs} notify={notify} />;
 
   return <>
     <header>
       <h2 className="text-3xl font-bold">Docs</h2>
-      <label className="mt-3 grid gap-1 text-xs font-semibold text-muted-foreground">Inquiry<Select label="Choose inquiry for documents" value={selectedId} onValueChange={(id) => { selectInquiry(id); setNotice(""); setSelected(null); }} options={inquiryOptions} /></label>
+      <label className="mt-3 grid gap-1 text-xs font-semibold text-muted-foreground">Inquiry<Select label="Choose inquiry for documents" value={selectedId} onValueChange={(id) => { selectInquiry(id); setSelected(null); }} options={inquiryOptions} /></label>
     </header>
 
     <div className="mt-5 grid grid-cols-[minmax(0,1fr)_44px] gap-2">
@@ -147,7 +137,7 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
   </>;
 }
 
-function DocumentViewer({ asset, inquiry, navigate, back, notice, setNotice }) {
+function DocumentViewer({ asset, inquiry, navigate, back, notify }) {
   const viewerRef = React.useRef(null);
   const file = asset.kind === "file" ? asset.item : null;
   const document = asset.kind === "document" ? asset.item : null;
@@ -169,7 +159,7 @@ function DocumentViewer({ asset, inquiry, navigate, back, notice, setNotice }) {
     anchor.download = `${safeDownloadName(document.title || "document")}.txt`;
     anchor.click();
     URL.revokeObjectURL(url);
-    setNotice("Document downloaded.");
+    notify?.("Document downloaded.");
   }
 
   async function share() {
@@ -180,7 +170,7 @@ function DocumentViewer({ asset, inquiry, navigate, back, notice, setNotice }) {
         url = result.shareLink.publicUrl;
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(url);
-          setNotice("Signed external link copied. It expires in 7 days.");
+          notify?.("Signed external link copied. It expires in 7 days.");
           return;
         }
       }
@@ -190,12 +180,12 @@ function DocumentViewer({ asset, inquiry, navigate, back, notice, setNotice }) {
       }
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(url);
-        setNotice("Link copied.");
+        notify?.("Link copied.");
         return;
       }
-      setNotice(file ? "Signed external link created." : "Sharing is not available in this browser.");
+      notify?.(file ? "Signed external link created." : "Sharing is not available in this browser.");
     } catch (error) {
-      if (error?.name !== "AbortError") setNotice("Could not share this document.");
+      if (error?.name !== "AbortError") notify?.({ tone: "error", message: "Could not share this document." });
     }
   }
 
@@ -204,14 +194,13 @@ function DocumentViewer({ asset, inquiry, navigate, back, notice, setNotice }) {
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" aria-label="Back to Docs" onClick={back}><ArrowLeft size={20} /></Button>
         <div className="min-w-0 flex-1"><h2 className="truncate text-base font-bold text-foreground">{asset.title}</h2><p className="truncate text-xs text-muted-foreground">{inquiry?.title || "Selected inquiry"} · {details}</p></div>
-        {file ? <a href={downloadUrl} download={file.file_name || asset.title} aria-label="Download document" onClick={() => setNotice("Download started.")} className="grid size-9 place-items-center rounded-md text-brand-muted-foreground hover:bg-brand-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"><Download size={19} /></a> : <Button variant="ghost" size="icon" aria-label="Download document" onClick={download}><Download size={19} /></Button>}
+        {file ? <a href={downloadUrl} download={file.file_name || asset.title} aria-label="Download document" onClick={() => notify?.("Download started.")} className="grid size-9 place-items-center rounded-md text-brand-muted-foreground hover:bg-brand-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"><Download size={19} /></a> : <Button variant="ghost" size="icon" aria-label="Download document" onClick={download}><Download size={19} /></Button>}
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
         {file ? <a href={downloadUrl} download={file.file_name || asset.title} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-brand-foreground"><Download size={16} />Download</a> : <Button onClick={download}><Download size={16} />Download</Button>}
         <Button variant="outline" onClick={() => navigate("detail")}><ExternalLink size={16} />Inquiry</Button>
         <Button variant="outline" onClick={share} disabled={shareMutation.isPending}><Share2 size={16} />{shareMutation.isPending ? "Signing..." : "Share"}</Button>
       </div>
-      {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
     </div>
 
     <div className="px-4 pb-4 pt-6">
@@ -380,7 +369,7 @@ function versionComparison(current, previous) {
 function wordCount(value) { return String(value || "").trim().split(/\s+/).filter(Boolean).length; }
 function paragraphs(value) { return String(value || "").split(/\n{2,}|\n/).map((part) => part.trim()).filter(Boolean); }
 
-export function MoreScreen({ user, preferences, personalization, integrations, selectedId, notice, setNotice }) {
+export function MoreScreen({ user, preferences, personalization, integrations, selectedId, setNotice }) {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = React.useState(null);
   const settings = parseSettings(preferences?.settings_json);
@@ -426,6 +415,27 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
     else connect.mutate(provider);
   }
   const sync = useMutation({ mutationFn: () => client.sync(selectedId), onSuccess: () => setNotice("Inquiry synced to CRM.") });
+  const moreErrorMessage = [
+    profile.error,
+    saveRules.error,
+    changePassword.error,
+    createInvite.error,
+    updateUser.error,
+    saveView.error,
+    deleteView.error,
+    saveRetention.error,
+    previewRetention.error,
+    connect.error,
+    sync.error,
+    audit.error,
+    readiness.error,
+    providerQueue.error,
+    retention.error,
+    aiPrompts.error
+  ].find(Boolean)?.message;
+  React.useEffect(() => {
+    if (moreErrorMessage) setNotice?.({ tone: "error", message: String(moreErrorMessage) });
+  }, [moreErrorMessage, setNotice]);
   React.useEffect(() => {
     const policy = retention.data?.policy;
     if (policy) setRetentionDraft({ retentionDays: policy.retention_days || 365, archiveAfterDays: policy.archive_after_days || 180, legalHold: Boolean(policy.legal_hold) });
@@ -454,7 +464,6 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
       </div>
     </section>
     <div className="mt-4 divide-y divide-border border-y border-border"><Menu icon={UserRound} label="Account" action={() => setDialog("account")} /><Menu icon={ShieldCheck} label="Security" action={() => setDialog("security")} /><Menu icon={SlidersHorizontal} label="Saved views" action={() => setDialog("views")} />{user?.role && ["admin", "project_manager"].includes(user.role) && <Menu icon={KeyRound} label="Admin users" action={() => setDialog("admin")} />}{user?.role === "admin" && <Menu icon={Activity} label="Audit history" action={() => setDialog("audit")} />}{user?.role === "admin" && <Menu icon={Archive} label="File retention" action={() => setDialog("retention")} />}{user?.role === "admin" && <Menu icon={Bot} label="AI prompt registry" action={() => setDialog("ai-prompts")} />}{user?.role === "admin" && <Menu icon={ServerCog} label="System health" action={() => setDialog("health")} />}<Menu icon={Bell} label="Preferences" action={() => setDialog("notifications")} /><Menu icon={Link2} label="Integrations" action={() => setDialog("integrations")} /><Menu icon={CircleHelp} label="Help" action={() => setDialog("help")} /><Menu icon={RefreshCw} label="Sync selected inquiry" action={() => sync.mutate()} /></div>
-    {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
     <Dialog open={dialog === "account"} onOpenChange={(open) => !open && setDialog(null)} title="Account"><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); profile.mutate(); }}><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Email"><Input value={user?.email || ""} readOnly /></Field><Button type="submit">Save profile</Button></form></Dialog>
     <Dialog open={dialog === "security"} onOpenChange={(open) => !open && setDialog(null)} title="Security"><div className="grid gap-4">
       <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); changePassword.mutate(); }}>
@@ -462,7 +471,6 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
         <Field label="Current password"><Input type="password" value={passwords.currentPassword} onChange={(event) => setPasswords({ ...passwords, currentPassword: event.target.value })} /></Field>
         <Field label="New password"><Input type="password" value={passwords.newPassword} onChange={(event) => setPasswords({ ...passwords, newPassword: event.target.value })} /></Field>
         <Button type="submit" disabled={changePassword.isPending || passwords.newPassword.length < 10}>Update password</Button>
-        {changePassword.error && <Notice tone="error">{changePassword.error.message}</Notice>}
       </form>
       <Card className="p-3"><div className="flex items-start gap-3"><ShieldCheck size={19} className="mt-0.5 text-brand-700" /><div><b className="text-sm">Google identity</b><p className="mt-1 text-sm leading-5 text-muted-foreground">Google Sign-In can be connected with OAuth credentials for this workspace.</p></div></div></Card>
       <div><b className="text-sm">Active sessions</b><div className="mt-2 grid gap-2">{sessions.isLoading ? <p className="text-sm text-muted-foreground">Loading sessions...</p> : sessions.data?.sessions?.length ? sessions.data.sessions.map((session) => <Card key={session.id} className="flex items-center justify-between gap-3 p-3"><div><p className="text-sm font-semibold">{session.id}</p><p className="text-xs text-muted-foreground">Expires {formatDate(session.expiresAt)}</p></div><Button size="sm" variant="outline" onClick={() => revoke.mutate(session.id)} disabled={revoke.isPending}>Revoke</Button></Card>) : <p className="text-sm text-muted-foreground">No active sessions found.</p>}</div></div>
@@ -473,7 +481,6 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
         <Field label="Email"><Input type="email" value={invite.email} onChange={(event) => setInvite({ ...invite, email: event.target.value })} /></Field>
         <Field label="Role"><Select value={invite.role} onValueChange={(role) => setInvite({ ...invite, role })} options={[["estimator", "Estimator"], ["sales", "Sales"], ["project_manager", "Project manager"], ["admin", "Admin"]]} /></Field>
         <Button type="submit" disabled={createInvite.isPending || !invite.email}>Create invite</Button>
-        {createInvite.error && <Notice tone="error">{createInvite.error.message}</Notice>}
       </form>
       <div className="grid gap-2">{admin.isLoading ? <p className="text-sm text-muted-foreground">Loading users...</p> : (admin.data?.users || []).map((item) => <Card key={item.id} className="grid gap-3 p-3"><div><b className="text-sm">{item.fullName}</b><p className="text-xs text-muted-foreground">{item.email} · {roleLabel(item.role)} · {item.isActive ? "Active" : "Inactive"}</p></div><div className="grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { isActive: !item.isActive } })}>{item.isActive ? "Deactivate" : "Activate"}</Button><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { role: item.role === "admin" ? "estimator" : "admin" } })}>{item.role === "admin" ? "Make estimator" : "Make admin"}</Button></div></Card>)}</div>
       {admin.data?.invites?.length > 0 && <div><b className="text-sm">Recent invites</b><div className="mt-2 grid gap-2">{admin.data.invites.map((item) => <Card key={item.id} className="p-3"><p className="text-sm font-semibold">{item.email}</p><p className="text-xs text-muted-foreground">{roleLabel(item.role)} · {item.acceptedAt ? "Accepted" : item.revokedAt ? "Revoked" : "Pending"}</p></Card>)}</div></div>}
@@ -485,18 +492,16 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
         <Field label="Screen"><Select value={viewDraft.screen} onValueChange={(screen) => setViewDraft({ ...viewDraft, screen })} options={[["today", "Today"], ["inquiries", "Inquiries"], ["docs", "Docs"], ["composers", "Composers"], ["admin", "Admin"]]} /></Field>
         <Checkbox label="Use as default view" checked={viewDraft.isDefault} onCheckedChange={(value) => setViewDraft({ ...viewDraft, isDefault: Boolean(value) })} />
         <Button type="submit" disabled={saveView.isPending || !viewDraft.name.trim()}>Save view</Button>
-        {saveView.error && <Notice tone="error">{saveView.error.message}</Notice>}
       </form>
       <div className="grid gap-2">{(personalization?.savedViews || []).length ? personalization.savedViews.map((view) => <Card key={view.id} className="grid grid-cols-[minmax(0,1fr)_40px] items-center gap-3 p-3"><div className="min-w-0"><b className="truncate text-sm">{view.name}</b><p className="mt-1 text-xs text-muted-foreground">{screenLabel(view.screen)}{view.is_default || view.isDefault ? " · Default" : ""}</p></div><Button size="icon" variant="ghost" aria-label={`Delete ${view.name}`} onClick={() => deleteView.mutate(view.id)} disabled={deleteView.isPending}><Trash2 size={17} /></Button></Card>) : <p className="text-sm text-muted-foreground">No saved views yet.</p>}</div>
     </div></Dialog>
-    <Dialog open={dialog === "audit"} onOpenChange={(open) => !open && setDialog(null)} title="Audit history"><div className="grid gap-2">{audit.isLoading ? <p className="text-sm text-muted-foreground">Loading audit history...</p> : audit.data?.events?.length ? audit.data.events.map((event) => <Card key={event.id} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{event.action}</b><p className="mt-1 text-xs text-muted-foreground">{event.entity_type} · {event.entity_id}</p></div><span className="shrink-0 text-xs text-muted-foreground">{formatDate(event.created_at)}</span></div></Card>) : <p className="text-sm text-muted-foreground">No audit events yet.</p>}{audit.error && <Notice tone="error">{audit.error.message}</Notice>}</div></Dialog>
+    <Dialog open={dialog === "audit"} onOpenChange={(open) => !open && setDialog(null)} title="Audit history"><div className="grid gap-2">{audit.isLoading ? <p className="text-sm text-muted-foreground">Loading audit history...</p> : audit.data?.events?.length ? audit.data.events.map((event) => <Card key={event.id} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{event.action}</b><p className="mt-1 text-xs text-muted-foreground">{event.entity_type} · {event.entity_id}</p></div><span className="shrink-0 text-xs text-muted-foreground">{formatDate(event.created_at)}</span></div></Card>) : <p className="text-sm text-muted-foreground">No audit events yet.</p>}</div></Dialog>
     <Dialog open={dialog === "health"} onOpenChange={(open) => !open && setDialog(null)} title="System health"><div className="grid gap-3">
       {readiness.isLoading ? <p className="text-sm text-muted-foreground">Checking system health...</p> : readiness.data ? <>
         <Card className="p-3"><div className="flex items-center justify-between gap-3"><div><b className="text-sm">Readiness status</b><p className="mt-1 text-xs text-muted-foreground">Checked {formatDate(readiness.data.checkedAt)}</p></div><Badge tone={readiness.data.ready ? "green" : "red"}>{readiness.data.status}</Badge></div></Card>
         <div className="grid gap-2">{(readiness.data.checks || []).map((check) => <Card key={check.key} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{checkLabel(check.key)}</b><p className="mt-1 text-xs leading-5 text-muted-foreground">{check.detail}</p></div><Badge tone={check.ok ? check.warningOnly ? "amber" : "green" : "red"}>{check.ok ? check.warningOnly ? "Warning" : "OK" : "Fail"}</Badge></div></Card>)}</div>
         <section className="grid gap-2"><h3 className="text-sm font-bold text-foreground">Provider queue</h3>{providerQueue.isLoading ? <p className="text-sm text-muted-foreground">Loading provider queue...</p> : providerQueue.data?.items?.length ? providerQueue.data.items.map((item) => <Card key={`${item.type}-${item.id}`} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{item.provider || item.display_name || "Provider"} · {item.operation}</b><p className="mt-1 truncate text-xs text-muted-foreground">{item.inquiry_title || item.external_id || item.communication_id || "Account operation"}</p>{item.error_message && <p className="mt-1 text-xs leading-5 text-red-700">{item.error_message}</p>}</div><Badge tone={providerQueueTone(item.status)}>{item.status}</Badge></div></Card>) : <p className="text-sm text-muted-foreground">No queued provider work.</p>}</section>
       </> : <p className="text-sm text-muted-foreground">System health is unavailable.</p>}
-      {(readiness.error || providerQueue.error) && <Notice tone="error">{(readiness.error || providerQueue.error).message}</Notice>}
     </div></Dialog>
     <Dialog open={dialog === "retention"} onOpenChange={(open) => !open && setDialog(null)} title="File retention"><div className="grid gap-4">
       <Card className="p-3"><div className="flex items-start gap-3"><Archive size={19} className="mt-0.5 text-brand-700" /><div><b className="text-sm">Storage lifecycle</b><p className="mt-1 text-sm leading-5 text-muted-foreground">Files are retained by account policy, share links expire separately, and legal hold pauses cleanup.</p></div></div></Card>
@@ -508,11 +513,9 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
       <div className="grid grid-cols-2 gap-2"><Button variant="outline" disabled={previewRetention.isPending || retention.isLoading} onClick={() => previewRetention.mutate()}>{previewRetention.isPending ? "Checking..." : "Preview cleanup"}</Button><Button disabled={saveRetention.isPending} onClick={() => saveRetention.mutate()}>{saveRetention.isPending ? "Saving..." : "Save policy"}</Button></div>
       {retention.data?.policy?.updated_at && <p className="text-xs text-muted-foreground">Last updated {formatDate(retention.data.policy.updated_at)}</p>}
       {previewRetention.data && <section className="grid gap-2"><div className="flex items-center justify-between gap-3"><b className="text-sm">Cleanup preview</b><Badge tone={previewRetention.data.legalHold ? "amber" : previewRetention.data.candidateCount ? "red" : "green"}>{previewRetention.data.legalHold ? "Held" : `${previewRetention.data.candidateCount} files`}</Badge></div>{previewRetention.data.candidates?.length ? previewRetention.data.candidates.map((file) => <Card key={file.id} className="p-3"><b className="block truncate text-sm">{file.file_name}</b><p className="mt-1 truncate text-xs text-muted-foreground">{[file.company_name, file.inquiry_title, formatDate(file.uploaded_at)].filter(Boolean).join(" · ")}</p></Card>) : <p className="text-sm text-muted-foreground">{previewRetention.data.legalHold ? "Legal hold is active." : "No files are past retention."}</p>}</section>}
-      {(retention.error || saveRetention.error || previewRetention.error) && <Notice tone="error">{(retention.error || saveRetention.error || previewRetention.error).message}</Notice>}
     </div></Dialog>
     <Dialog open={dialog === "ai-prompts"} onOpenChange={(open) => !open && setDialog(null)} title="AI prompt registry"><div className="grid gap-3">
       {aiPrompts.isLoading ? <p className="text-sm text-muted-foreground">Loading prompt registry...</p> : aiPrompts.data?.prompts?.length ? aiPrompts.data.prompts.map((prompt) => <Card key={prompt.id} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{prompt.id}</b><p className="mt-1 text-xs text-muted-foreground">{prompt.runType} · {prompt.schemaName} · {prompt.modelDefault}</p><p className="mt-2 text-sm leading-5 text-muted-foreground">{prompt.summary}</p><p className="mt-2 text-xs text-muted-foreground">Fallback: {prompt.fallback}</p></div><Badge tone={prompt.status === "active" ? "green" : "slate"}>{prompt.status}</Badge></div></Card>) : <p className="text-sm text-muted-foreground">No prompt versions registered.</p>}
-      {aiPrompts.error && <Notice tone="error">{aiPrompts.error.message}</Notice>}
     </div></Dialog>
     <Dialog open={dialog === "notifications"} onOpenChange={(open) => !open && setDialog(null)} title="Preferences"><div className="grid gap-3">
       <Field label="Default screen"><Select value={rules.defaultView} onValueChange={(defaultView) => setRules({ ...rules, defaultView })} options={[["today", "Today"], ["pipeline", "Inquiries"], ["docs", "Docs"], ["more", "More"]]} /></Field>
@@ -521,7 +524,7 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
       <div className="grid gap-1 rounded-md border border-border p-3"><Checkbox label="High priority inquiry alerts" checked={rules.highPriorityAlerts} onCheckedChange={(value) => setRules({ ...rules, highPriorityAlerts: Boolean(value) })} /><Checkbox label="Lease deadline reminders" checked={rules.leaseDeadlineReminders} onCheckedChange={(value) => setRules({ ...rules, leaseDeadlineReminders: Boolean(value) })} /><Checkbox label="End-of-day digest" checked={rules.dailyDigest} onCheckedChange={(value) => setRules({ ...rules, dailyDigest: Boolean(value) })} /></div>
       <Button className="mt-2" onClick={() => saveRules.mutate()} disabled={saveRules.isPending}>{saveRules.isPending ? "Saving..." : "Save preferences"}</Button>
     </div></Dialog>
-    <Dialog open={dialog === "integrations"} onOpenChange={(open) => !open && setDialog(null)} title="Integrations"><div className="grid gap-2">{["crm", "email", "calendar"].map((provider) => { const connected = integrations?.some((item) => item.provider === provider && item.status === "connected" && (provider !== "calendar" || item.display_name === "Google Calendar")); return <Card key={provider} className="flex items-center justify-between gap-3 p-3"><div><b className="capitalize">{provider === "calendar" ? "Google Calendar" : provider}</b><span className="block text-xs text-muted-foreground">{connected ? "Connected" : "Not connected"}</span></div><Button size="sm" variant={connected ? "outline" : "default"} onClick={() => connectProvider(provider)} disabled={connect.isPending}>{connected ? "Reconnect" : "Connect"}</Button></Card>; })}{connect.error && <Notice tone="error">{connect.error.message}</Notice>}</div></Dialog>
+    <Dialog open={dialog === "integrations"} onOpenChange={(open) => !open && setDialog(null)} title="Integrations"><div className="grid gap-2">{["crm", "email", "calendar"].map((provider) => { const connected = integrations?.some((item) => item.provider === provider && item.status === "connected" && (provider !== "calendar" || item.display_name === "Google Calendar")); return <Card key={provider} className="flex items-center justify-between gap-3 p-3"><div><b className="capitalize">{provider === "calendar" ? "Google Calendar" : provider}</b><span className="block text-xs text-muted-foreground">{connected ? "Connected" : "Not connected"}</span></div><Button size="sm" variant={connected ? "outline" : "default"} onClick={() => connectProvider(provider)} disabled={connect.isPending}>{connected ? "Reconnect" : "Connect"}</Button></Card>; })}</div></Dialog>
     <Dialog open={dialog === "help"} onOpenChange={(open) => !open && setDialog(null)} title="Help & support"><div className="grid gap-3">
       <Card className="p-3"><b className="text-sm">DCDcom operations support</b><p className="mt-1 text-sm leading-5 text-muted-foreground">support@dcdcom.com</p></Card>
       <Card className="p-3"><b className="text-sm">Workspace context</b><p className="mt-1 text-sm leading-5 text-muted-foreground">{user?.email || "Signed-in user"} · {roleLabel(user?.role)} · {rules.timezone}</p></Card>

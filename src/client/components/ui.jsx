@@ -4,7 +4,7 @@ import * as SelectPrimitive from "@radix-ui/react-select";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import * as AccordionPrimitive from "@radix-ui/react-accordion";
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, CircleCheck, Info, X } from "lucide-react";
 import { cva } from "class-variance-authority";
 import { cn } from "../lib/utils";
 
@@ -124,6 +124,59 @@ const noticeTones = {
 
 export function Notice({ children, tone = "success" }) {
   return <p role="status" className={cn("rounded-xl border p-3 text-sm leading-5", noticeTones[tone] || noticeTones.success)}>{children}</p>;
+}
+
+const actionAlertTones = {
+  error: {
+    icon: CircleAlert,
+    title: "Action failed",
+    className: "border-red-500/30 bg-red-50 text-red-950 shadow-red-950/10 dark:bg-red-950 dark:text-red-50 dark:shadow-black/30",
+    iconClassName: "bg-red-500/12 text-red-700 dark:text-red-300"
+  },
+  warning: {
+    icon: CircleAlert,
+    title: "Heads up",
+    className: "border-amber-500/35 bg-amber-50 text-amber-950 shadow-amber-950/10 dark:bg-amber-950 dark:text-amber-50 dark:shadow-black/30",
+    iconClassName: "bg-amber-500/14 text-amber-700 dark:text-amber-300"
+  },
+  success: {
+    icon: CircleCheck,
+    title: "Action complete",
+    className: "border-brand/30 bg-brand-muted text-brand-muted-foreground shadow-brand/10 dark:bg-[#13230d] dark:text-brand-100 dark:shadow-black/30",
+    iconClassName: "bg-brand/15 text-brand-muted-foreground dark:text-brand-200"
+  },
+  info: {
+    icon: Info,
+    title: "Update",
+    className: "border-border-strong bg-popover text-popover-foreground shadow-slate-950/10 dark:shadow-black/30",
+    iconClassName: "bg-muted text-muted-foreground"
+  }
+};
+
+export function ActionAlertViewport({ alerts = [], dismiss }) {
+  if (!alerts.length) return null;
+  return <div aria-live="polite" aria-relevant="additions" className="pointer-events-none fixed bottom-24 right-3 z-[2147483647] grid w-[min(390px,calc(100vw-24px))] gap-2 sm:bottom-5 sm:right-5">
+    {alerts.map((alert) => <ActionAlertCard key={alert.id} alert={alert} dismiss={dismiss} />)}
+  </div>;
+}
+
+function ActionAlertCard({ alert, dismiss }) {
+  const tone = actionAlertTones[alert.tone] || actionAlertTones.success;
+  const Icon = tone.icon;
+  React.useEffect(() => {
+    const timeout = window.setTimeout(() => dismiss(alert.id), alert.duration || 10000);
+    return () => window.clearTimeout(timeout);
+  }, [alert.duration, alert.id, dismiss]);
+  return <section role={alert.tone === "error" ? "alert" : "status"} className={cn("pointer-events-auto grid grid-cols-[36px_minmax(0,1fr)_32px] items-start gap-3 rounded-xl border p-3 shadow-2xl ring-1 ring-black/5 animate-in slide-in-from-right-8 fade-in duration-300", tone.className)}>
+    <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg", tone.iconClassName)}><Icon size={19} /></span>
+    <div className="min-w-0 pt-0.5">
+      <p className="text-sm font-bold leading-5">{alert.title || tone.title}</p>
+      <p className="mt-0.5 break-words text-sm leading-5 opacity-80">{alert.message}</p>
+    </div>
+    <button type="button" onClick={() => dismiss(alert.id)} className="grid size-8 place-items-center rounded-md opacity-65 outline-none transition hover:bg-black/5 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/70 dark:hover:bg-white/10" aria-label="Dismiss alert">
+      <X size={16} />
+    </button>
+  </section>;
 }
 
 export function AccordionSection({ value, title, meta, icon, children, defaultOpen = false, className }) {

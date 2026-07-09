@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import { AlertTriangle, Calculator, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, FileCheck, FileImage, FileText, ListChecks, MailCheck, MessageSquareText, RefreshCw, Send, Sparkles, Upload, X } from "lucide-react";
 import { client } from "../lib/api";
-import { AccordionSection, Badge, Button, Dialog, Field, Notice, Select, Textarea } from "../components/ui";
+import { AccordionSection, Badge, Button, Dialog, Field, Select, Textarea } from "../components/ui";
 import { cn, moneyRange } from "../lib/utils";
 
 const responseGoals = [
@@ -14,7 +14,7 @@ const responseGoals = [
 const fileCategoryOptions = [["other", "General document"], ["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
 const uploadShortcuts = [["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
 
-export function EmailScreen({ detail, notice, setNotice, draftScope = "workspace:user" }) {
+export function EmailScreen({ detail, setNotice, draftScope = "workspace:user" }) {
   const queryClient = useQueryClient();
   const existing = detail.documents?.find((document) => document.document_type === "follow_up_email");
   const draftKey = `dcdcom:${draftScope}:email-draft:${detail.inquiry.id}`;
@@ -34,7 +34,11 @@ export function EmailScreen({ detail, notice, setNotice, draftScope = "workspace
   const save = useMutation({ mutationFn: () => client.saveDocument(detail.inquiry.id, { documentId: existing?.id, documentType: "follow_up_email", title: `Follow-up Email - ${detail.inquiry.title}`, subject, body, expectedVersion: existing?.current_version, metadata: { goal, tone: goalConfig.tone } }), onSuccess: () => { removeDraft(draftKey); setNotice("Response saved as a new version."); refresh(); } });
   const send = useMutation({ mutationFn: () => client.sendFollowUp(detail.inquiry.id, { documentId: existing?.id, title: `Follow-up Email - ${detail.inquiry.title}`, subject, body, channel: "email", expectedVersion: existing?.current_version, metadata: { goal, tone: goalConfig.tone } }), onSuccess: (result) => { removeDraft(draftKey); setNotice(result.communication.status === "sent" ? "Response sent and logged." : "Response queued and logged."); refresh(); } });
   const busy = generate.isPending || save.isPending || send.isPending;
+  const emailErrorMessage = (generate.error || save.error || send.error)?.message ? String((generate.error || save.error || send.error).message) : "";
   React.useEffect(() => writeDraft(draftKey, { goal, body, subject }), [draftKey, goal, body, subject]);
+  React.useEffect(() => {
+    if (emailErrorMessage) setNotice?.({ tone: "error", message: emailErrorMessage });
+  }, [emailErrorMessage, setNotice]);
 
   return <div className="-mx-4 -my-4 min-h-[calc(100dvh-136px)] bg-background">
     <header className="border-b border-border bg-card px-4 pb-4 pt-5">
@@ -53,7 +57,7 @@ export function EmailScreen({ detail, notice, setNotice, draftScope = "workspace
       </div>
     </header>
 
-    <main className="px-4 pb-24 pt-4">
+    <main className="px-4 pb-0 pt-4">
       <section className="rounded-lg border border-border bg-card p-3 text-card-foreground shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -93,10 +97,7 @@ export function EmailScreen({ detail, notice, setNotice, draftScope = "workspace
         </div>
       </section>
 
-      {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
-      {(generate.error || save.error || send.error) && <div className="mt-3"><Notice tone="error">{String((generate.error || save.error || send.error).message)}</Notice></div>}
-
-      <div className="sticky bottom-0 z-10 -mx-4 mt-4 border-t border-border bg-background/95 px-4 py-3 shadow-[0_-12px_28px_rgba(15,23,42,0.08)] backdrop-blur">
+      <div className="sticky bottom-0 z-10 -mx-4 mt-0 border-t border-border bg-background/95 px-4 py-2 backdrop-blur">
         <div className="grid grid-cols-[minmax(0,1fr)_44px_44px] gap-2">
           <Button disabled={busy} onClick={() => generate.mutate()}><Sparkles size={16} />{generate.isPending ? "Generating..." : "Generate response"}</Button>
           <Button size="icon" variant="outline" disabled={busy || !body.trim()} onClick={() => save.mutate()} aria-label="Save response draft" title="Save response draft"><FileCheck size={16} /></Button>
@@ -114,7 +115,7 @@ function MiniMetric({ label, value }) {
   </div>;
 }
 
-export function ProposalScreen({ detail, notice, setNotice }) {
+export function ProposalScreen({ detail, setNotice }) {
   const queryClient = useQueryClient();
   const documents = detail.documents || [];
   const files = detail.files || [];
@@ -210,6 +211,10 @@ export function ProposalScreen({ detail, notice, setNotice }) {
       await refresh();
     }
   });
+  const proposalErrorMessage = generate.error ? generationErrorMessage(generate.error) : (save.error || review.error || upload.error)?.message ? String((save.error || review.error || upload.error).message) : "";
+  React.useEffect(() => {
+    if (proposalErrorMessage) setNotice?.({ tone: "error", message: proposalErrorMessage });
+  }, [proposalErrorMessage, setNotice]);
   React.useEffect(() => {
     const availableIds = sourceOptions.map((file) => file.id);
     const keepableIds = new Set([...availableIds, ...newSourceIds]);
@@ -251,29 +256,36 @@ export function ProposalScreen({ detail, notice, setNotice }) {
     setCompletedSteps((items) => items.filter((step) => step < 2));
   };
 
-  return <div className="-mx-4 -my-4 min-h-[calc(100dvh-136px)] bg-slate-50">
-    <header className="border-b border-slate-800 bg-slate-950 px-4 pb-5 pt-4 text-white">
+  return <div className="-mx-4 -my-4 min-h-[calc(100dvh-136px)] bg-background">
+    <header className="border-b border-[#2f4826] bg-[linear-gradient(135deg,#173315_0%,#102411_58%,#0d1b0d_100%)] px-4 pb-5 pt-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <span className="inline-flex min-h-6 items-center gap-1.5 rounded-md border border-blue-400/30 bg-blue-500/15 px-2 text-xs font-semibold text-blue-100"><Sparkles size={13} />AI document builder</span>
+          <span className="inline-flex min-h-6 items-center gap-1.5 rounded-md border border-[#dbe7d2]/35 bg-[#f4f8ef]/[0.12] px-2 text-xs font-semibold text-brand-100"><Sparkles size={13} />AI document builder</span>
           <h2 className="mt-3 text-2xl font-bold leading-tight">Create project documents</h2>
-          <p className="mt-1 truncate text-sm leading-5 text-slate-300">{detail.inquiry.title}</p>
+          <p className="mt-1 truncate text-sm leading-5 text-white/72">{detail.inquiry.title}</p>
         </div>
-        <strong className="shrink-0 rounded-md border border-white/10 bg-white/10 px-2 py-1 text-right text-sm">{moneyRange(detail.inquiry.estimated_low_cents, detail.inquiry.estimated_high_cents)}<span className="block text-xs font-normal text-slate-300">Range</span></strong>
+        <strong className="shrink-0 rounded-md border border-[#dbe7d2]/25 bg-[#f4f8ef]/[0.1] px-2 py-1 text-right text-sm">{moneyRange(detail.inquiry.estimated_low_cents, detail.inquiry.estimated_high_cents)}<span className="block text-xs font-normal text-white/68">Range</span></strong>
       </div>
     </header>
 
-    <main className="px-4 pb-4 pt-4">
-      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+    <main className="px-4 pb-0 pt-4">
+      <section className="overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm">
         <WizardProgress steps={steps} activeStep={activeStep} unlockedStep={unlockedStep} setActiveStep={setActiveStep} />
-        <div className="border-t border-slate-200 bg-white">
-          <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-4">
+        <div className="border-t border-border bg-card">
+          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4">
             <div className="min-w-0">
-              <p className="text-xs font-bold uppercase text-blue-700">Step {activeStep + 1} of {steps.length}</p>
-              <h3 className="mt-1 text-xl font-bold leading-tight text-slate-950">{currentStep.title}</h3>
-              <p className="mt-1 text-sm leading-5 text-slate-500">{currentStep.description}</p>
+              <p className="text-xs font-bold uppercase text-brand-muted-foreground">Step {activeStep + 1} of {steps.length}</p>
+              <h3 className="mt-1 text-xl font-bold leading-tight text-foreground">{currentStep.title}</h3>
+              <p className="mt-1 text-sm leading-5 text-muted-foreground">{currentStep.description}</p>
             </div>
-            <Badge tone={currentStep.done ? "green" : currentStep.ready ? "blue" : "amber"} className="shrink-0">{currentStep.summary}</Badge>
+            <Badge tone={currentStep.done ? "green" : currentStep.ready ? "blue" : "amber"} className="shrink-0 lg:hidden">{currentStep.summary}</Badge>
+            <div className="hidden shrink-0 flex-col items-end gap-2 lg:flex">
+              <Badge tone={currentStep.done ? "green" : currentStep.ready ? "blue" : "amber"} className="shrink-0">{currentStep.summary}</Badge>
+              <div className="flex items-center justify-between gap-2">
+                <Button size="sm" variant="outline" onClick={goBack} disabled={activeStep === 0}><ChevronLeft size={15} />Back</Button>
+                {isLastStep ? <Button size="sm" onClick={() => generate.mutate()} disabled={!canGenerate}><RefreshCw size={15} />{generate.isPending ? "Generating..." : `Generate ${selectedConfig.label}`}</Button> : <Button size="sm" onClick={goNext} disabled={!currentStep.ready}>Next<ChevronRight size={15} /></Button>}
+              </div>
+            </div>
           </div>
           <div className="min-h-[430px] px-4 py-4">
             {activeStep === 0 && <DocumentTypeStep selectedType={selectedType} setSelectedType={changeDocumentType} documents={documents} selectedConfig={selectedConfig} />}
@@ -284,29 +296,27 @@ export function ProposalScreen({ detail, notice, setNotice }) {
         </div>
       </section>
 
-      <div className="sticky bottom-0 z-10 -mx-4 mt-4 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-12px_28px_rgba(15,23,42,0.08)] backdrop-blur">
+      <div className="sticky bottom-0 z-10 -mx-4 mt-0 border-t border-border bg-background/95 px-4 py-2 backdrop-blur lg:hidden">
         <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
           <Button variant="outline" onClick={goBack} disabled={activeStep === 0}><ChevronLeft size={16} />Back</Button>
           {isLastStep ? <Button onClick={() => generate.mutate()} disabled={!canGenerate}><RefreshCw size={16} />{generate.isPending ? "Generating..." : `Generate ${selectedConfig.label}`}</Button> : <Button onClick={goNext} disabled={!currentStep.ready}>Next<ChevronRight size={16} /></Button>}
         </div>
       </div>
-      {notice && <div className="mt-3"><Notice>{notice}</Notice></div>}
-      {(generate.error || save.error || review.error || upload.error) && <div className="mt-3"><Notice tone="error">{generate.error ? generationErrorMessage(generate.error) : String((save.error || review.error || upload.error).message)}</Notice></div>}
     </main>
-    <Dialog open={uploadOpen} onOpenChange={setUploadOpen} title="Upload source documents" description="Add the files AI should reference before generating this document."><UploadFiles busy={upload.isPending} initialCategory={uploadPreset} submit={(queuedFiles) => upload.mutate(queuedFiles)} /></Dialog>
+    <Dialog open={uploadOpen} onOpenChange={setUploadOpen} title="Upload source documents" description="Add the files AI should reference before generating this document."><UploadFiles busy={upload.isPending} initialCategory={uploadPreset} notify={setNotice} submit={(queuedFiles) => upload.mutate(queuedFiles)} /></Dialog>
   </div>;
 }
 
 function WizardProgress({ steps, activeStep, unlockedStep, setActiveStep }) {
-  return <div className="bg-slate-50 px-3 py-3">
+  return <div className="bg-muted/50 px-3 py-3">
     <div className="grid grid-cols-4 gap-1.5">
       {steps.map((step, index) => {
         const active = index === activeStep;
         const done = step.done;
         const locked = index > unlockedStep;
-        return <button key={step.title} type="button" onClick={() => !locked && setActiveStep(index)} disabled={locked} aria-current={active ? "step" : undefined} className={cn("min-w-0 rounded-md border px-2 py-2 text-left transition-colors disabled:pointer-events-none", active ? "border-blue-600 bg-white shadow-sm" : "border-transparent hover:bg-white", done && !active ? "text-emerald-700" : locked ? "text-slate-300" : "text-slate-500")}>
-          <span className={cn("mx-auto flex size-7 items-center justify-center rounded-full text-xs font-bold", active ? "bg-blue-600 text-white" : done ? "bg-emerald-50 text-emerald-700" : locked ? "bg-slate-100 text-slate-300" : "bg-slate-200 text-slate-600")}>{done ? <CheckCircle2 size={15} /> : index + 1}</span>
-          <span className={cn("mt-1 block truncate text-center text-[11px] font-bold", active ? "text-blue-700" : "")}>{step.title.replace("Select ", "").replace("Add ", "").replace("Generate ", "")}</span>
+        return <button key={step.title} type="button" onClick={() => !locked && setActiveStep(index)} disabled={locked} aria-current={active ? "step" : undefined} className={cn("min-w-0 rounded-md border px-2 py-2 text-left transition-colors disabled:pointer-events-none", active ? "border-brand bg-card shadow-sm" : "border-transparent hover:bg-muted", done && !active ? "text-brand-muted-foreground" : locked ? "text-muted-foreground/45" : "text-muted-foreground")}>
+          <span className={cn("mx-auto flex size-7 items-center justify-center rounded-full text-xs font-bold", active ? "bg-brand text-brand-foreground" : done ? "bg-brand-muted text-brand-muted-foreground" : locked ? "bg-muted text-muted-foreground/45" : "bg-muted text-muted-foreground")}>{done ? <CheckCircle2 size={15} /> : index + 1}</span>
+          <span className={cn("mt-1 block truncate text-center text-[11px] font-bold", active ? "text-brand-muted-foreground" : "")}>{step.title.replace("Select ", "").replace("Add ", "").replace("Generate ", "")}</span>
         </button>;
       })}
     </div>
@@ -319,10 +329,10 @@ function DocumentTypeStep({ selectedType, setSelectedType, documents, selectedCo
       {documentConfigs.map(({ value, label, short, icon: Icon }) => {
         const active = selectedType === value;
         const saved = documents.some((document) => document.document_type === value);
-        return <button key={value} type="button" onClick={() => setSelectedType(value)} className={cn("min-h-[104px] rounded-md border bg-white p-3 text-left transition-colors", active ? "border-blue-600 bg-blue-50 text-blue-900 shadow-sm" : "border-slate-200 text-slate-700 hover:bg-slate-50")}>
-          <span className="flex items-start justify-between gap-2"><Icon size={22} className={active ? "text-blue-700" : "text-slate-500"} />{saved && <CheckCircle2 size={17} className="text-emerald-600" />}</span>
+        return <button key={value} type="button" onClick={() => setSelectedType(value)} className={cn("min-h-[104px] rounded-md border bg-card p-3 text-left transition-colors", active ? "border-brand bg-brand-muted text-brand-muted-foreground shadow-sm" : "border-border text-foreground hover:bg-muted")}>
+          <span className="flex items-start justify-between gap-2"><Icon size={22} className={active ? "text-brand-muted-foreground" : "text-muted-foreground"} />{saved && <CheckCircle2 size={17} className="text-emerald-600" />}</span>
           <span className="mt-2 block text-sm font-bold leading-5">{label}</span>
-          <span className="mt-1 block text-xs leading-4 text-slate-500">{short}</span>
+          <span className={cn("mt-1 block text-xs leading-4", active ? "text-brand-muted-foreground/80" : "text-muted-foreground")}>{short}</span>
         </button>;
       })}
     </div>
@@ -333,8 +343,8 @@ function DocumentTypeStep({ selectedType, setSelectedType, documents, selectedCo
 function ContextStep({ value, onChange, selectedConfig, selectedSourceDocuments }) {
   return <div className="grid gap-3">
     <Textarea className="min-h-44" value={value} onChange={(event) => onChange(event.target.value)} placeholder="Example: Make this client-facing, focus on cable abatement and HVAC removal, and mention that the lease ends July 15." />
-    <div className="rounded-md border border-blue-100 bg-blue-50 p-3">
-      <p className="text-xs font-bold uppercase text-blue-700">AI will combine</p>
+    <div className="rounded-md border border-brand/25 bg-brand-muted/60 p-3">
+      <p className="text-xs font-bold uppercase text-brand-muted-foreground">AI will combine</p>
       <div className="mt-2 grid gap-2 text-sm">
         <SummaryRow label="Type" value={selectedConfig.label} />
         <SummaryRow label="Sources" value={selectedSourceDocuments.length ? `${selectedSourceDocuments.length} selected` : "None selected"} />
@@ -345,35 +355,35 @@ function ContextStep({ value, onChange, selectedConfig, selectedSourceDocuments 
 
 function GenerateStep({ selectedConfig, selectedSourceDocuments, additionalContext, readiness, body, title, selectedDocument }) {
   return <div>
-    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+    <div className="rounded-md border border-border bg-muted/50 p-3">
       <div className="grid gap-2 text-sm">
         <SummaryRow label="Document type" value={selectedConfig.label} />
         <SummaryRow label="Source documents" value={selectedSourceDocuments.length ? `${selectedSourceDocuments.length} selected` : "None selected"} />
         <SummaryRow label="Additional context" value={additionalContext.trim() || "No extra instructions"} />
       </div>
     </div>
-    <div className="mt-3 rounded-lg border border-slate-200 bg-white">
-      <div className="border-b border-slate-200 p-4">
+    <div className="mt-3 rounded-lg border border-border bg-card">
+      <div className="border-b border-border p-4">
         <div className="flex items-center justify-between gap-3">
-          <span className="inline-flex items-center gap-2 text-sm font-bold text-slate-950"><Sparkles size={17} className="text-blue-700" />AI reference</span>
+          <span className="inline-flex items-center gap-2 text-sm font-bold text-foreground"><Sparkles size={17} className="text-brand" />AI reference</span>
           <Badge tone={readiness.ready ? "green" : "amber"}>{readiness.available}/{readiness.total} inputs</Badge>
         </div>
-        <p className="mt-2 text-sm leading-5 text-slate-600">{selectedConfig.reference}</p>
+        <p className="mt-2 text-sm leading-5 text-muted-foreground">{selectedConfig.reference}</p>
       </div>
-      <div className="divide-y divide-slate-100">
+      <div className="divide-y divide-border">
         {readiness.items.map((item) => <div key={item.label} className="grid min-h-11 grid-cols-[20px_minmax(0,1fr)] items-center gap-2 px-4 py-2 text-sm">
           {item.available ? <CheckCircle2 size={17} className="text-emerald-600" /> : <AlertTriangle size={17} className="text-amber-600" />}
-          <span className={item.available ? "text-slate-700" : "font-medium text-slate-900"}>{item.label}</span>
+          <span className={item.available ? "text-muted-foreground" : "font-medium text-foreground"}>{item.label}</span>
         </div>)}
       </div>
     </div>
     <section className="mt-4">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-bold text-slate-950">{body ? title : "Generated draft"}</h3>
+        <h3 className="text-sm font-bold text-foreground">{body ? title : "Generated draft"}</h3>
         {selectedDocument && <Badge tone={selectedDocument.status === "review" ? "orange" : "slate"} className="capitalize">{selectedDocument.status || "draft"}</Badge>}
       </div>
-      <div className="rounded-lg border border-slate-200 bg-white p-4">
-        {body ? <div className="max-h-[420px] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{body}</div> : <p className="text-sm leading-6 text-slate-500">Review the inputs, then generate an editable draft.</p>}
+      <div className="rounded-lg border border-border bg-card p-4">
+        {body ? <div className="max-h-[420px] overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{body}</div> : <p className="text-sm leading-6 text-muted-foreground">Review the inputs, then generate an editable draft.</p>}
       </div>
     </section>
   </div>;
@@ -383,7 +393,7 @@ function SourceDocuments({ options, selectedIds, newSourceIds, onToggle, upload 
   const selectedCount = options.filter((file) => selectedIds.includes(file.id)).length;
   return <div>
     <div className="flex items-center justify-between gap-3">
-      <p className="text-xs leading-5 text-slate-500">{options.length ? `${selectedCount}/${options.length} source documents selected` : "No project documents are linked yet."}</p>
+      <p className="text-xs leading-5 text-muted-foreground">{options.length ? `${selectedCount}/${options.length} source documents selected` : "No project documents are linked yet."}</p>
       <Button variant="outline" size="sm" onClick={() => upload("other")}><Upload size={15} />Add</Button>
     </div>
     <div className="mt-3 grid grid-cols-2 gap-2">
@@ -392,26 +402,26 @@ function SourceDocuments({ options, selectedIds, newSourceIds, onToggle, upload 
     {options.length ? <div className="mt-3 grid max-h-[320px] gap-2 overflow-y-auto pr-1">
       {options.map((file) => {
         const selected = selectedIds.includes(file.id);
-        return <button key={file.id} type="button" onClick={() => onToggle(file.id)} className={cn("grid min-h-[76px] grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-md border p-3 text-left transition-colors", selected ? "border-blue-600 bg-blue-50 text-blue-950 shadow-sm" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")}>
-          {selected ? <CheckCircle2 size={18} className="mt-0.5 text-blue-700" /> : <FileText size={18} className="mt-0.5 text-slate-400" />}
+        return <button key={file.id} type="button" onClick={() => onToggle(file.id)} className={cn("grid min-h-[76px] grid-cols-[22px_minmax(0,1fr)] gap-2 rounded-md border p-3 text-left transition-colors", selected ? "border-brand bg-brand-muted text-brand-muted-foreground shadow-sm" : "border-border bg-card text-foreground hover:bg-muted")}>
+          {selected ? <CheckCircle2 size={18} className="mt-0.5 text-brand-muted-foreground" /> : <FileText size={18} className="mt-0.5 text-muted-foreground" />}
           <span className="min-w-0">
             <span className="flex items-center justify-between gap-2">
               <b className="truncate text-sm">{file.label}</b>
               <Badge tone={newSourceIds.includes(file.id) ? "green" : selected ? "blue" : "slate"} className="shrink-0">{newSourceIds.includes(file.id) ? "New upload" : file.sourceLabel}</Badge>
             </span>
-            <span className="mt-1 block truncate text-xs text-slate-500">{file.fileName}</span>
-            <span className="mt-1 block text-[11px] text-slate-400">{file.dateLabel}</span>
+            <span className={cn("mt-1 block truncate text-xs", selected ? "text-brand-muted-foreground/80" : "text-muted-foreground")}>{file.fileName}</span>
+            <span className={cn("mt-1 block text-[11px]", selected ? "text-brand-muted-foreground/70" : "text-muted-foreground/70")}>{file.dateLabel}</span>
           </span>
         </button>;
       })}
-    </div> : <div className="mt-3 rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 text-sm leading-5 text-slate-500">Upload a floor plan, equipment list, contract, email attachment, photo, PDF, spreadsheet, or other source file to make it available for AI generation.</div>}
+    </div> : <div className="mt-3 rounded-md border border-dashed border-border-strong bg-muted/50 p-4 text-sm leading-5 text-muted-foreground">Upload a floor plan, equipment list, contract, email attachment, photo, PDF, spreadsheet, or other source file to make it available for AI generation.</div>}
   </div>;
 }
 
 function SummaryRow({ label, value }) {
   return <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
-    <span className="text-xs font-semibold uppercase text-slate-500">{label}</span>
-    <span className="min-w-0 truncate text-sm text-slate-800">{value}</span>
+    <span className="text-xs font-semibold uppercase text-muted-foreground">{label}</span>
+    <span className="min-w-0 truncate text-sm text-foreground">{value}</span>
   </div>;
 }
 
@@ -434,7 +444,7 @@ function nextUnlockedStep(completedSteps) {
   return 3;
 }
 
-function UploadFiles({ busy, initialCategory = "other", submit }) {
+function UploadFiles({ busy, initialCategory = "other", notify, submit }) {
   const [queue, setQueue] = React.useState([]);
   const [documentCategory, setDocumentCategory] = React.useState(initialCategory);
   const [error, setError] = React.useState("");
@@ -445,18 +455,20 @@ function UploadFiles({ busy, initialCategory = "other", submit }) {
 
   function updateCategory(index, category) { setQueue((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, category } : item)); }
   function remove(index) { setQueue((items) => items.filter((_, itemIndex) => itemIndex !== index)); }
+  React.useEffect(() => {
+    if (error) notify?.({ tone: "error", message: error });
+  }, [error, notify]);
 
   return <div>
     <Field label="Document category" className="mb-3">
       <Select value={documentCategory} onValueChange={setDocumentCategory} options={fileCategoryOptions} />
     </Field>
     <div className="grid grid-cols-2 gap-2">
-      <div {...photos.getRootProps()}><input {...photos.getInputProps({ "aria-label": "Choose photo files" })} /><Button type="button" variant="outline" className="w-full" onClick={photos.open}><FileImage size={17} />{documentCategory === "other" ? "Photos" : "Image"}</Button></div>
-      <div {...documents.getRootProps()}><input {...documents.getInputProps({ "aria-label": "Choose document files" })} /><Button type="button" variant="outline" className="w-full" onClick={documents.open}><FileText size={17} />{fileCategoryLabel(documentCategory)}</Button></div>
+      <div {...photos.getRootProps()}><input {...photos.getInputProps({ "aria-label": "Choose image files" })} /><Button type="button" variant="outline" className="w-full" onClick={photos.open}><FileImage size={17} />Image</Button></div>
+      <div {...documents.getRootProps()}><input {...documents.getInputProps({ "aria-label": "Choose document files" })} /><Button type="button" variant="outline" className="w-full" onClick={documents.open}><FileText size={17} />Document</Button></div>
     </div>
-    <p className="mt-2 text-xs text-slate-500">Select multiple files at once. Maximum 12 MB per file.</p>
-    {error && <div className="mt-3"><Notice tone="error">{error}</Notice></div>}
-    {queue.length > 0 && <div className="mt-4 divide-y divide-slate-100 border-y border-slate-200">{queue.map((entry, index) => <div key={`${entry.file.name}-${entry.file.lastModified}-${index}`} className="grid grid-cols-[minmax(0,1fr)_120px_32px] items-center gap-2 py-2"><div className="min-w-0"><b className="block truncate text-xs">{entry.file.name}</b><span className="text-[11px] text-slate-500">{formatBytes(entry.file.size)}</span></div>{entry.category === "photo" ? <Badge tone="cyan">Photo</Badge> : <Select label={`Category for ${entry.file.name}`} value={entry.category} onValueChange={(value) => updateCategory(index, value)} options={fileCategoryOptions} className="min-h-8 px-2 text-xs" />}<Button type="button" variant="ghost" size="icon" className="min-h-8 size-8" onClick={() => remove(index)} aria-label={`Remove ${entry.file.name}`}><X size={15} /></Button></div>)}</div>}
+    <p className="mt-2 text-xs text-muted-foreground">Select multiple files at once. Maximum 12 MB per file.</p>
+    {queue.length > 0 && <div className="mt-4 divide-y divide-border border-y border-border">{queue.map((entry, index) => <div key={`${entry.file.name}-${entry.file.lastModified}-${index}`} className="grid grid-cols-[minmax(0,1fr)_120px_32px] items-center gap-2 py-2"><div className="min-w-0"><b className="block truncate text-xs text-foreground">{entry.file.name}</b><span className="text-[11px] text-muted-foreground">{formatBytes(entry.file.size)}</span></div>{entry.category === "photo" ? <Badge tone="cyan">Photo</Badge> : <Select label={`Category for ${entry.file.name}`} value={entry.category} onValueChange={(value) => updateCategory(index, value)} options={fileCategoryOptions} className="min-h-8 px-2 text-xs" />}<Button type="button" variant="ghost" size="icon" className="min-h-8 size-8" onClick={() => remove(index)} aria-label={`Remove ${entry.file.name}`}><X size={15} /></Button></div>)}</div>}
     <Button className="mt-4 w-full" disabled={busy || !queue.length} onClick={() => submit(queue)}><Upload size={17} />{busy ? "Uploading..." : `Upload ${queue.length || ""} ${queue.length === 1 ? "file" : "files"}`}</Button>
   </div>;
 }
@@ -516,11 +528,11 @@ const documentConfigs = [
 
 function DocumentExample({ config }) {
   const Icon = config.icon;
-  return <section className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
-    <div className="flex items-center gap-2 text-sm font-bold text-slate-950"><Icon size={18} className="text-blue-700" />{config.exampleTitle}</div>
-    <div className="mt-3 rounded-md border border-slate-200 bg-white p-3">
-      <p className="text-xs font-bold uppercase text-blue-700">DCDecom</p>
-      <div className="mt-3 space-y-3">{config.example.map((line, index) => index % 2 === 0 ? <h4 key={line} className="text-sm font-bold text-slate-950">{line}</h4> : <p key={line} className="text-sm leading-5 text-slate-700">{line}</p>)}</div>
+  return <section className="mt-5 rounded-lg border border-border bg-muted/50 p-4">
+    <div className="flex items-center gap-2 text-sm font-bold text-foreground"><Icon size={18} className="text-brand" />{config.exampleTitle}</div>
+    <div className="mt-3 rounded-md border border-border bg-card p-3">
+      <p className="text-xs font-bold uppercase text-brand-muted-foreground">DCDecom</p>
+      <div className="mt-3 space-y-3">{config.example.map((line, index) => index % 2 === 0 ? <h4 key={line} className="text-sm font-bold text-foreground">{line}</h4> : <p key={line} className="text-sm leading-5 text-muted-foreground">{line}</p>)}</div>
     </div>
   </section>;
 }
