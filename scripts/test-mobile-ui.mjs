@@ -98,6 +98,7 @@ assert(files.composers.includes("completedSteps") && files.composers.includes("u
 assert(!files.composers.includes("copyText") && !files.composers.includes("Save draft") && !files.composers.includes(">Copy<"), "Document generator should not expose copy or manual save buttons inside the wizard");
 assert(!files.composers.includes("selectedDocument?.body") && !files.composers.includes("dcdcom:proposal-draft"), "Document generator should not hydrate or persist the current workflow until resume is intentionally added");
 assert(files.api.includes("GENERATION_TIMEOUT_MS") && files.api.includes("friendlyTimeoutError"), "Generation requests should use a longer timeout with a friendly failure message");
+assert(files.api.includes("INTAKE_TIMEOUT_MS") && files.api.includes("Inquiry creation is taking longer"), "Inquiry creation should use a longer timeout with a friendly failure message");
 assert(files.composers.includes("generationErrorMessage") && files.composers.includes("local fallback"), "Document generator should explain AI timeout fallback states");
 
 for (const endpoint of ["today", "inquiries/from-source", "inquiries/${id}/files", "files/${id}", "inquiries/${id}/send-follow-up", "inquiries/${id}/proposal-review"]) {

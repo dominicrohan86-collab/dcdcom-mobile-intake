@@ -1,6 +1,7 @@
 import ky from "ky";
 
 const GENERATION_TIMEOUT_MS = 120_000;
+const INTAKE_TIMEOUT_MS = 120_000;
 
 const api = ky.create({
   prefix: "/api/",
@@ -58,7 +59,10 @@ export const client = {
   watchInquiry: (id) => api.post(`inquiries/${id}/watchers`).json(),
   unwatchInquiry: (id) => api.delete(`inquiries/${id}/watchers/me`).json(),
   analyze: (json) => api.post("ai/intake-preview", { json }).json(),
-  createInquiry: (json) => api.post("inquiries/from-source", { json }).json(),
+  createInquiry: (json) => api.post("inquiries/from-source", { json, timeout: INTAKE_TIMEOUT_MS }).json().catch((error) => {
+    if (isTimeoutError(error)) throw friendlyTimeoutError("Inquiry creation is taking longer than expected. Please try again in a moment.");
+    throw error;
+  }),
   updateStatus: (id, status, expectedUpdatedAt) => api.patch(`inquiries/${id}/status`, { json: cleanPayload({ status, expectedUpdatedAt }) }).json(),
   updateDetails: (id, json) => api.patch(`inquiries/${id}/details`, { json }).json(),
   updateOwner: (id, ownerUserId, expectedUpdatedAt) => api.patch(`inquiries/${id}/owner`, { json: cleanPayload({ ownerUserId, expectedUpdatedAt }) }).json(),

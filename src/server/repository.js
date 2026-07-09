@@ -9,6 +9,7 @@ import {
 
 const now = () => new Date().toISOString();
 const id = (prefix) => `${prefix}_${crypto.randomUUID()}`;
+const writeGroup = (db, callback) => callback(db);
 const LOW_CONFIDENCE_THRESHOLD = 70;
 const NOTIFICATION_TYPES = new Set(["lead_created", "extraction_complete", "extraction_low_confidence", "missing_information", "follow_up_needed", "proposal_ready", "site_visit_needed", "status_changed", "system_success", "system_error"]);
 const NOTIFICATION_SEVERITIES = new Set(["info", "success", "warning", "error"]);
@@ -121,7 +122,7 @@ export async function deleteInquiry(env, accountId, inquiryId) {
     await Promise.all(fileRows.flatMap((file) => [file.storageKey, file.thumbnailStorageKey].filter(Boolean).map((key) => env.FILES.delete(key))));
   }
 
-  await db.transaction(async (tx) => {
+  await writeGroup(db, async (tx) => {
     await tx.delete(aiRuns).where(eq(aiRuns.inquiryId, inquiryId));
     await tx.delete(syncEvents).where(eq(syncEvents.inquiryId, inquiryId));
     if (auditedEntityIds.length) await tx.delete(auditLog).where(and(eq(auditLog.accountId, accountId), inArray(auditLog.entityId, auditedEntityIds)));
@@ -433,7 +434,7 @@ export async function listInquiryWatchers(env, accountId, inquiryId, viewerUserI
 
 export async function watchInquiry(env, accountId, inquiryId, userId) {
   const db = getDb(env);
-  const result = await db.transaction(async (tx) => {
+  const result = await writeGroup(db, async (tx) => {
     const [entry] = await tx.select({ id: inquiries.id, title: inquiries.title }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
     if (!entry) return null;
     const watcherId = id("watch");
@@ -448,7 +449,7 @@ export async function watchInquiry(env, accountId, inquiryId, userId) {
 
 export async function unwatchInquiry(env, accountId, inquiryId, userId) {
   const db = getDb(env);
-  const result = await db.transaction(async (tx) => {
+  const result = await writeGroup(db, async (tx) => {
     const [entry] = await tx.select({ id: inquiries.id, title: inquiries.title, watcherId: inquiryWatchers.id })
       .from(inquiries)
       .leftJoin(inquiryWatchers, and(eq(inquiryWatchers.inquiryId, inquiries.id), eq(inquiryWatchers.userId, userId)))
@@ -492,7 +493,7 @@ export async function upsertSavedView(env, accountId, userId, payload) {
     isDefault: Boolean(payload.isDefault),
     updatedAt: now()
   };
-  await db.transaction(async (tx) => {
+  await writeGroup(db, async (tx) => {
     if (value.isDefault) await tx.update(userSavedViews).set({ isDefault: false, updatedAt: now() }).where(and(eq(userSavedViews.userId, userId), eq(userSavedViews.screen, payload.screen)));
     await tx.insert(userSavedViews).values(value).onConflictDoUpdate({
       target: [userSavedViews.userId, userSavedViews.screen, userSavedViews.name],
@@ -783,48 +784,44 @@ export async function updateInquiryDetails(env, accountId, inquiryId, userId, pa
 
 export async function createInquiry(env, accountId, userId, payload) {
   const db = getDb(env);
-  return db.transaction(async (tx) => {
-    const inquiryId = id("inq"), companyId = id("co"), contactId = id("ct"), siteId = id("site"), sourceId = id("src");
-    const company = payload.company || "Unknown Company";
-    const location = payload.location || {};
-    await tx.insert(companies).values({ id: companyId, accountId, name: company, website: payload.website || null, industry: payload.industry || null });
-    await tx.insert(contacts).values({ id: contactId, accountId, companyId, fullName: payload.contact?.fullName || "Unknown Contact", title: payload.contact?.title || null, email: payload.contact?.email || null, phone: payload.contact?.phone || null, preferredChannel: payload.sourceChannel || "unknown" });
-    await tx.insert(sites).values({ id: siteId, accountId, companyId, name: payload.siteName || `${company} Site`, city: location.city || null, region: location.region || null, country: location.country || "US", siteType: payload.siteType || "unknown", accessNotes: payload.accessNotes || null });
-    const inquiryValue = { id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title: payload.title || `${company} Inquiry`, serviceType: payload.serviceType || "other", sourceChannel: payload.sourceChannel || "manual", priority: payload.priority || "medium", workload: payload.workload || "medium", status: "new", confidenceScore: payload.confidenceScore || 0, leaseEndDate: payload.leaseEndDate || null, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() };
-    await tx.insert(inquiries).values(inquiryValue);
-    await tx.insert(inquiryWatchers).values({ id: id("watch"), inquiryId, userId }).onConflictDoNothing();
-    await tx.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || null, sender: payload.sender || null, rawText: payload.rawText || "", capturedByUserId: userId, capturedAt: now() });
-    await tx.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || null, body: payload.rawText || "", status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
-    await createActivity(env, accountId, inquiryId, userId, "inquiry.created", `Created inquiry ${payload.title || company}`, { sourceId }, tx);
-    await generateLeadNotifications(env, accountId, userId, { inquiry: inquiryValue }, tx);
-    return { id: inquiryId, companyId, contactId, siteId, sourceId };
-  });
+  const inquiryId = id("inq"), companyId = id("co"), contactId = id("ct"), siteId = id("site"), sourceId = id("src");
+  const company = payload.company || "Unknown Company";
+  const location = payload.location || {};
+  await db.insert(companies).values({ id: companyId, accountId, name: company, website: payload.website || null, industry: payload.industry || null });
+  await db.insert(contacts).values({ id: contactId, accountId, companyId, fullName: payload.contact?.fullName || "Unknown Contact", title: payload.contact?.title || null, email: payload.contact?.email || null, phone: payload.contact?.phone || null, preferredChannel: payload.sourceChannel || "unknown" });
+  await db.insert(sites).values({ id: siteId, accountId, companyId, name: payload.siteName || `${company} Site`, city: location.city || null, region: location.region || null, country: location.country || "US", siteType: payload.siteType || "unknown", accessNotes: payload.accessNotes || null });
+  const inquiryValue = { id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title: payload.title || `${company} Inquiry`, serviceType: payload.serviceType || "other", sourceChannel: payload.sourceChannel || "manual", priority: payload.priority || "medium", workload: payload.workload || "medium", status: "new", confidenceScore: payload.confidenceScore || 0, leaseEndDate: payload.leaseEndDate || null, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() };
+  await db.insert(inquiries).values(inquiryValue);
+  await db.insert(inquiryWatchers).values({ id: id("watch"), inquiryId, userId }).onConflictDoNothing();
+  await db.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || null, sender: payload.sender || null, rawText: payload.rawText || "", capturedByUserId: userId, capturedAt: now() });
+  await db.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || null, body: payload.rawText || "", status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
+  await createActivity(env, accountId, inquiryId, userId, "inquiry.created", `Created inquiry ${payload.title || company}`, { sourceId }, db);
+  await generateLeadNotifications(env, accountId, userId, { inquiry: inquiryValue }, db);
+  return { id: inquiryId, companyId, contactId, siteId, sourceId };
 }
 
 export async function createInquiryFromExtraction(env, accountId, userId, payload, analysis) {
   const db = getDb(env);
-  return db.transaction(async (tx) => {
-    const extraction = analysis.extraction;
-    const companyId = await findOrCreateCompany(env, accountId, extraction.company, tx);
-    const contactId = id("ct"), siteId = id("site"), inquiryId = id("inq"), sourceId = id("src"), summaryId = id("sum");
-    const titleLocation = [extraction.site.city, extraction.site.region].filter(Boolean).join(", ");
-    const title = `${extraction.company.name}${titleLocation ? ` - ${titleLocation}` : ""}`;
-    const status = extraction.missingRequirements.length ? "needs_info" : "estimating";
-    await tx.insert(contacts).values({ id: contactId, accountId, companyId, fullName: extraction.contact.fullName, email: extraction.contact.email, phone: extraction.contact.phone, preferredChannel: extraction.contact.preferredChannel });
-    await tx.insert(sites).values({ id: siteId, accountId, companyId, name: extraction.site.name, city: extraction.site.city, region: extraction.site.region, country: extraction.site.country, siteType: extraction.site.siteType, accessNotes: extraction.site.accessNotes });
-    const inquiryValue = { id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title, serviceType: extraction.service.type, sourceChannel: payload.sourceChannel || "manual", priority: extraction.priority, workload: extraction.workload, status, estimatedLowCents: extraction.estimateRange.lowCents, estimatedHighCents: extraction.estimateRange.highCents, confidenceScore: extraction.confidenceScore, leaseEndDate: extraction.timeline.leaseEndDate, requestedDueDate: extraction.timeline.requestedDueDate, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() };
-    await tx.insert(inquiries).values(inquiryValue);
-    await tx.insert(inquiryWatchers).values({ id: id("watch"), inquiryId, userId }).onConflictDoNothing();
-    await tx.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || "AI intake source", sender: payload.sender || extraction.contact.email || extraction.contact.phone || extraction.contact.fullName, rawText: payload.rawText, capturedByUserId: userId, capturedAt: now() });
-    await tx.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || "AI intake source", body: payload.rawText, status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
-    await tx.insert(aiSummaries).values({ id: summaryId, inquiryId, summaryType: "intake", body: extraction.summary, modelName: analysis.model, confidenceScore: extraction.confidenceScore, generatedByUserId: userId, generatedAt: now() });
-    await persistExtractedFields(env, inquiryId, sourceId, extraction, tx);
-    await persistMissingRequirements(env, inquiryId, extraction.missingRequirements, tx);
-    const aiRun = await recordAiRun(env, accountId, inquiryId, userId, { runType: "intake_extraction", provider: analysis.mode === "live" ? "openai" : "local", modelName: analysis.model, promptVersionId: analysis.promptVersionId, status: analysis.mode === "live" ? "success" : "fallback", inputPreview: payload.rawText, output: extraction, errorMessage: analysis.error || null, latencyMs: analysis.latencyMs || null }, tx);
-    await createActivity(env, accountId, inquiryId, userId, "ai.intake_extracted", `${analysis.mode === "live" ? "AI" : "Fallback AI"} created structured intake for ${title}`, { aiRunId: aiRun.id, missingCount: extraction.missingRequirements.length }, tx);
-    await generateLeadNotifications(env, accountId, userId, { inquiry: inquiryValue, analysis }, tx);
-    return { id: inquiryId, companyId, contactId, siteId, sourceId, aiRunId: aiRun.id, status, missingCount: extraction.missingRequirements.length };
-  });
+  const extraction = analysis.extraction;
+  const companyId = await findOrCreateCompany(env, accountId, extraction.company, db);
+  const contactId = id("ct"), siteId = id("site"), inquiryId = id("inq"), sourceId = id("src"), summaryId = id("sum");
+  const titleLocation = [extraction.site.city, extraction.site.region].filter(Boolean).join(", ");
+  const title = `${extraction.company.name}${titleLocation ? ` - ${titleLocation}` : ""}`;
+  const status = extraction.missingRequirements.length ? "needs_info" : "estimating";
+  await db.insert(contacts).values({ id: contactId, accountId, companyId, fullName: extraction.contact.fullName, email: extraction.contact.email, phone: extraction.contact.phone, preferredChannel: extraction.contact.preferredChannel });
+  await db.insert(sites).values({ id: siteId, accountId, companyId, name: extraction.site.name, city: extraction.site.city, region: extraction.site.region, country: extraction.site.country, siteType: extraction.site.siteType, accessNotes: extraction.site.accessNotes });
+  const inquiryValue = { id: inquiryId, accountId, companyId, contactId, siteId, ownerUserId: userId, title, serviceType: extraction.service.type, sourceChannel: payload.sourceChannel || "manual", priority: extraction.priority, workload: extraction.workload, status, estimatedLowCents: extraction.estimateRange.lowCents, estimatedHighCents: extraction.estimateRange.highCents, confidenceScore: extraction.confidenceScore, leaseEndDate: extraction.timeline.leaseEndDate, requestedDueDate: extraction.timeline.requestedDueDate, receivedAt: now(), lastCustomerActivityAt: now(), createdAt: now(), updatedAt: now() };
+  await db.insert(inquiries).values(inquiryValue);
+  await db.insert(inquiryWatchers).values({ id: id("watch"), inquiryId, userId }).onConflictDoNothing();
+  await db.insert(inquirySources).values({ id: sourceId, inquiryId, channel: payload.sourceChannel || "manual", subject: payload.subject || "AI intake source", sender: payload.sender || extraction.contact.email || extraction.contact.phone || extraction.contact.fullName, rawText: payload.rawText, capturedByUserId: userId, capturedAt: now() });
+  await db.insert(communications).values({ id: id("comm"), inquiryId, contactId, direction: "inbound", channel: communicationChannel(payload.sourceChannel), subject: payload.subject || "AI intake source", body: payload.rawText, status: "received", externalMessageId: payload.externalMessageId || null, createdByUserId: userId, occurredAt: now() });
+  await db.insert(aiSummaries).values({ id: summaryId, inquiryId, summaryType: "intake", body: extraction.summary, modelName: analysis.model, confidenceScore: extraction.confidenceScore, generatedByUserId: userId, generatedAt: now() });
+  await persistExtractedFields(env, inquiryId, sourceId, extraction, db);
+  await persistMissingRequirements(env, inquiryId, extraction.missingRequirements, db);
+  const aiRun = await recordAiRun(env, accountId, inquiryId, userId, { runType: "intake_extraction", provider: analysis.mode === "live" ? "openai" : "local", modelName: analysis.model, promptVersionId: analysis.promptVersionId, status: analysis.mode === "live" ? "success" : "fallback", inputPreview: payload.rawText, output: extraction, errorMessage: analysis.error || null, latencyMs: analysis.latencyMs || null }, db);
+  await createActivity(env, accountId, inquiryId, userId, "ai.intake_extracted", `${analysis.mode === "live" ? "AI" : "Fallback AI"} created structured intake for ${title}`, { aiRunId: aiRun.id, missingCount: extraction.missingRequirements.length }, db);
+  await generateLeadNotifications(env, accountId, userId, { inquiry: inquiryValue, analysis }, db);
+  return { id: inquiryId, companyId, contactId, siteId, sourceId, aiRunId: aiRun.id, status, missingCount: extraction.missingRequirements.length };
 }
 
 export async function recordAiRun(env, accountId, inquiryId, userId, run, db = getDb(env)) {
@@ -835,7 +832,7 @@ export async function recordAiRun(env, accountId, inquiryId, userId, run, db = g
 
 export async function createGeneratedWorkProduct(env, accountId, inquiryId, userId, type, analysis) {
   const db = getDb(env);
-  const saved = await db.transaction(async (tx) => {
+  const saved = await writeGroup(db, async (tx) => {
     const product = analysis.product;
     const documentId = id("doc"), versionId = id("docver");
     const documentType = normalizeDocumentType(product.documentType || type);
@@ -890,7 +887,7 @@ export async function createGeneratedWorkProduct(env, accountId, inquiryId, user
 
 export async function saveDocumentDraft(env, accountId, inquiryId, userId, payload) {
   const db = getDb(env);
-  const saved = await db.transaction(async (tx) => {
+  const saved = await writeGroup(db, async (tx) => {
     const documentType = normalizeDocumentType(payload.documentType || "other");
     const title = payload.title || titleForDocument(documentType);
     const subject = payload.subject || null;
@@ -925,7 +922,7 @@ export async function saveDocumentDraft(env, accountId, inquiryId, userId, paylo
 
 export async function submitProposalForReview(env, accountId, inquiryId, userId, payload = {}) {
   const db = getDb(env);
-  return db.transaction(async (tx) => {
+  return writeGroup(db, async (tx) => {
     const [inquiry] = await tx.select({ id: inquiries.id, title: inquiries.title, status: inquiries.status }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
     if (!inquiry) return null;
     const conditions = [eq(documents.inquiryId, inquiryId), eq(documents.documentType, "proposal")];
@@ -954,7 +951,7 @@ export async function submitProposalForReview(env, accountId, inquiryId, userId,
 
 export async function saveEstimateForInquiry(env, accountId, inquiryId, userId, payload = {}) {
   const db = getDb(env);
-  return db.transaction(async (tx) => {
+  return writeGroup(db, async (tx) => {
     const [inquiry] = await tx.select({ id: inquiries.id, title: inquiries.title, status: inquiries.status }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
     if (!inquiry) return null;
     const [{ version: latestVersion }] = await tx.select({ version: max(estimates.version) }).from(estimates).where(eq(estimates.inquiryId, inquiryId));
@@ -1117,7 +1114,7 @@ export async function listSiteVisits(env, accountId, inquiryId) {
 
 export async function scheduleSiteVisit(env, accountId, inquiryId, userId, payload = {}) {
   const db = getDb(env);
-  const scheduled = await db.transaction(async (tx) => {
+  const scheduled = await writeGroup(db, async (tx) => {
     const [inquiry] = await tx.select({ id: inquiries.id, title: inquiries.title, siteId: inquiries.siteId }).from(inquiries).where(and(eq(inquiries.accountId, accountId), eq(inquiries.id, inquiryId))).limit(1);
     if (!inquiry) return null;
     const [existing] = await tx.select().from(siteVisits).where(and(eq(siteVisits.inquiryId, inquiryId), inArray(siteVisits.status, ["needed", "scheduled"]))).orderBy(desc(siteVisits.createdAt)).limit(1);
@@ -1210,7 +1207,7 @@ export async function deleteFileRecord(env, accountId, fileId, userId) {
   const before = snake(row.file);
   await env.FILES.delete(row.file.storageKey);
   if (row.file.thumbnailStorageKey) await env.FILES.delete(row.file.thumbnailStorageKey);
-  await db.transaction(async (tx) => {
+  await writeGroup(db, async (tx) => {
     await tx.delete(files).where(eq(files.id, fileId));
     await createActivity(env, accountId, row.file.inquiryId, userId, "file.deleted", `Deleted ${row.file.fileName}`, { fileId, category: row.file.category }, tx);
     await createAuditLog(env, accountId, userId, "file", fileId, "file.deleted", before, null, tx);
@@ -1302,6 +1299,47 @@ export async function createDocumentExportFile(env, accountId, inquiryId, userId
     ...thumbnail,
     category: "document_export"
   });
+}
+
+export async function rebuildDocumentExportObject(env, fileId, accountId = null) {
+  if (!env?.FILES?.put) return null;
+  const db = getDb(env);
+  const predicates = [eq(files.id, fileId)];
+  if (accountId) predicates.push(eq(inquiries.accountId, accountId));
+  const [entry] = await db.select({ file: files, inquiry: inquiries })
+    .from(files)
+    .innerJoin(inquiries, eq(inquiries.id, files.inquiryId))
+    .where(and(...predicates))
+    .limit(1);
+  if (!entry || entry.file.category !== "document_export" || entry.file.contentType !== "application/pdf") return null;
+  const ids = documentExportIdsFromStorageKey(entry.file.storageKey);
+  if (!ids) return null;
+  const [versionRow] = await db.select({ document: documents, version: documentVersions })
+    .from(documentVersions)
+    .innerJoin(documents, eq(documents.id, documentVersions.documentId))
+    .where(and(eq(documents.inquiryId, entry.file.inquiryId), eq(documents.id, ids.documentId), eq(documentVersions.id, ids.versionId)))
+    .limit(1);
+  if (!versionRow) return null;
+  const bytes = createPdfBytes({
+    title: versionRow.document.title || titleForDocument(versionRow.document.documentType),
+    subject: versionRow.version.subject || null,
+    body: versionRow.version.body || "",
+    documentType: versionRow.document.documentType || "document",
+    version: versionRow.version.version || versionRow.document.currentVersion || 1
+  });
+  await env.FILES.put(entry.file.storageKey, bytes, {
+    httpMetadata: { contentType: "application/pdf" },
+    customMetadata: {
+      accountId: entry.inquiry.accountId,
+      inquiryId: entry.file.inquiryId,
+      documentId: ids.documentId,
+      versionId: ids.versionId,
+      documentType: versionRow.document.documentType || "document",
+      generatedFrom: "document_version_repair"
+    }
+  });
+  await db.update(files).set({ sizeBytes: bytes.byteLength, contentHash: await sha256Hex(bytes) }).where(eq(files.id, fileId));
+  return getFileForDownload(env, entry.inquiry.accountId, fileId);
 }
 
 export async function listFilesForInquiry(env, accountId, inquiryId) {
@@ -1508,6 +1546,10 @@ function stageLabel(status) {
   return ({ new: "New", needs_info: "Needs info", estimating: "Estimating", site_visit: "Site visit", proposal: "Proposal", review: "Review", won: "Won", lost: "Lost", archived: "Archived" })[status] || String(status || "Unknown").replaceAll("_", " ");
 }
 function safeSlug(value) { return String(value || "document").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "document"; }
+function documentExportIdsFromStorageKey(storageKey) {
+  const match = String(storageKey || "").match(/\/document-exports\/(doc_[^-]+(?:-[^-]+)*)-(docver_[^.]+)\.pdf$/);
+  return match ? { documentId: match[1], versionId: match[2] } : null;
+}
 export async function storeFileThumbnail(env, accountId, inquiryId, fileName, contentType, category, title = "") {
   if (!env?.FILES?.put || !isThumbnailCandidate(contentType)) return { thumbnailStatus: "unavailable" };
   const thumbnailStorageKey = `accounts/${accountId}/inquiries/${inquiryId}/thumbnails/${crypto.randomUUID()}-${safeSlug(fileName)}.svg`;

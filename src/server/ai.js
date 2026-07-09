@@ -388,6 +388,7 @@ export async function analyzeIntake(env, { rawText, sourceChannel = "manual", su
       model,
       schemaName: "dcdcom_intake_extraction",
       schema: INTAKE_SCHEMA,
+      timeoutMs: openAiTimeoutMs(env, "intake"),
       developerText: INTAKE_DEVELOPER_PROMPT,
       userText: [
         `Source channel: ${sourceChannel}`,
@@ -513,8 +514,7 @@ function parseResponseJson(data) {
   return JSON.parse(text);
 }
 
-async function callOpenAiJson(env, { model, schemaName, schema, developerText, userText }) {
-  const timeoutMs = openAiTimeoutMs(env);
+async function callOpenAiJson(env, { model, schemaName, schema, developerText, userText, timeoutMs = openAiTimeoutMs(env) }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let response;
@@ -561,9 +561,10 @@ async function callOpenAiJson(env, { model, schemaName, schema, developerText, u
   return { parsed: parseResponseJson(data), data };
 }
 
-function openAiTimeoutMs(env) {
-  const value = Number(env?.OPENAI_REQUEST_TIMEOUT_MS);
+function openAiTimeoutMs(env, runType = "work_product") {
+  const value = Number(runType === "intake" ? env?.OPENAI_INTAKE_TIMEOUT_MS || env?.OPENAI_REQUEST_TIMEOUT_MS : env?.OPENAI_REQUEST_TIMEOUT_MS);
   if (Number.isFinite(value) && value >= 1000 && value <= 110000) return Math.round(value);
+  if (runType === "intake") return 20_000;
   return 75_000;
 }
 

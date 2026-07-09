@@ -213,6 +213,26 @@ try {
   assert(saved.status === 201, "source intake should create inquiry");
   assert(saved.body.id, "source intake should return inquiry id");
 
+  const fetchBeforeIntakeTimeout = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url, init = {}) => {
+      if (!String(url).includes("api.openai.com")) return fetchBeforeIntakeTimeout(url, init);
+      return new Promise((resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")), { once: true });
+      });
+    };
+    const timedOutIntake = await request({ ...env, OPENAI_API_KEY: "test-openai-key", OPENAI_INTAKE_TIMEOUT_MS: "1000" }, "POST", "/api/inquiries/from-source", {
+      rawText: "Customer needs data center decommissioning for a small site in Dallas with cabinet removal, cable abatement, and a proposal next week.",
+      sourceChannel: "email",
+      externalMessageId: "timeout_intake_001"
+    });
+    assert(timedOutIntake.status === 201, "OpenAI intake timeout should still create a fallback inquiry");
+    assert(timedOutIntake.body.mode === "fallback", "OpenAI intake timeout should return fallback mode");
+    assert(timedOutIntake.body.error.includes("OpenAI request timed out"), "OpenAI intake timeout should explain the provider timeout");
+  } finally {
+    globalThis.fetch = fetchBeforeIntakeTimeout;
+  }
+
   const savedNotifications = await request(env, "GET", "/api/notifications");
   assert(savedNotifications.status === 200, "notifications listing should return 200");
   assert(savedNotifications.body.unreadCount >= 5, "new AI-created inquiry should create unread notifications");
@@ -262,7 +282,13 @@ try {
   assert(persistedProposal.metadata_json, "proposal detail should include document metadata");
   assert(JSON.parse(persistedProposal.metadata_json).promptVersionId === "work_product.v2026-07-04", "proposal document metadata should record prompt version");
   const filesAfterProposal = await request(env, "GET", `/api/inquiries/${saved.body.id}/files`);
-  assert(filesAfterProposal.body.files.some((file) => file.category === "document_export" && file.content_type === "application/pdf"), "generated proposal should create a durable PDF export file");
+  const proposalExport = filesAfterProposal.body.files.find((file) => file.category === "document_export" && file.content_type === "application/pdf");
+  assert(proposalExport, "generated proposal should create a durable PDF export file");
+  await env.FILES.delete(proposalExport.storage_key);
+  const repairedProposalExport = await rawRequest(env, "GET", `/api/files/${proposalExport.id}`);
+  assert(repairedProposalExport.status === 200, "missing generated PDF export object should be rebuilt on download");
+  assert(repairedProposalExport.headers.get("content-type")?.includes("application/pdf"), "rebuilt generated PDF export should be served as a PDF");
+  assert(await env.FILES.get(proposalExport.storage_key), "rebuilt generated PDF export should be written back to storage");
 
   const editedProposal = await request(env, "POST", `/api/inquiries/${saved.body.id}/documents`, {
     documentId: proposal.body.documentId,

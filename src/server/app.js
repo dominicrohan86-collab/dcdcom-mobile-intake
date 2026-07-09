@@ -8,7 +8,7 @@ import { ensureBootstrap, publicUser, readinessReport } from "./bootstrap.js";
 import { completeGoogleCalendarOAuth, createGoogleCalendarAuthUrl, describeGoogleCalendarFailure, getGoogleCalendarEvents, getGoogleCalendarStatus } from "./google-calendar.js";
 import { createRequestTelemetry } from "./observability.js";
 import { acceptInviteSchema, activitySchema, assignmentSchema, auditQuerySchema, changePasswordSchema, checklistSchema, commentSchema, communicationSchema, createInviteSchema, detailsSchema, documentSchema, emailRequestSchema, estimateSchema, fileRetentionPolicySchema, fileRetentionRunSchema, fileShareSchema, followUpSchema, generateSchema, inquiryListQuerySchema, intakeSchema, integrationSchema, loginSchema, notificationQuerySchema, notificationSchema, profileSchema, providerQueueQuerySchema, requirementSchema, resetPasswordSchema, reviewSchema, savedViewSchema, settingsSchema, signupSchema, siteVisitSchema, statusSchema, syncSchema, todayQuerySchema, updateUserAdminSchema } from "./contracts.js";
-import { createActivity, createFileRecord, createFileShareLink, createGeneratedWorkProduct, createInquiry, createInquiryComment, createInquiryFromExtraction, createNotification, deleteFileRecord, deleteInquiry, deleteSavedView, dismissNotification, getFileByContentHash, getFileForDownload, getFileRetentionPolicy, getInquiryDetail, getSharedFileForDownload, getTodayWorkspace, getUserPreferences, getUserWorkspaceState, listAuditEvents, listCommunications, listFileShareLinks, listFilesForInquiry, listInquiries, listIntegrations, listNotifications, listProviderQueue, listSiteVisits, listInquiryComments, listInquiryWatchers, logCommunication, markAllNotificationsRead, markNotificationRead, recordAiRun, recordRecentItem, revokeFileShareLink, runFileRetentionCleanup, saveDocumentDraft, saveEstimateForInquiry, scheduleSiteVisit, sendOutboundCommunication, storeFileThumbnail, submitProposalForReview, syncInquiry, unwatchInquiry, updateChecklistItem, updateFileRetentionPolicy, updateInquiryDetails, updateInquiryOwner, updateInquiryStatus, updateMissingRequirement, updateUserPreferences, updateUserProfile, upsertIntegration, upsertSavedView, watchInquiry } from "./repository.js";
+import { createActivity, createFileRecord, createFileShareLink, createGeneratedWorkProduct, createInquiry, createInquiryComment, createInquiryFromExtraction, createNotification, deleteFileRecord, deleteInquiry, deleteSavedView, dismissNotification, getFileByContentHash, getFileForDownload, getFileRetentionPolicy, getInquiryDetail, getSharedFileForDownload, getTodayWorkspace, getUserPreferences, getUserWorkspaceState, listAuditEvents, listCommunications, listFileShareLinks, listFilesForInquiry, listInquiries, listIntegrations, listNotifications, listProviderQueue, listSiteVisits, listInquiryComments, listInquiryWatchers, logCommunication, markAllNotificationsRead, markNotificationRead, rebuildDocumentExportObject, recordAiRun, recordRecentItem, revokeFileShareLink, runFileRetentionCleanup, saveDocumentDraft, saveEstimateForInquiry, scheduleSiteVisit, sendOutboundCommunication, storeFileThumbnail, submitProposalForReview, syncInquiry, unwatchInquiry, updateChecklistItem, updateFileRetentionPolicy, updateInquiryDetails, updateInquiryOwner, updateInquiryStatus, updateMissingRequirement, updateUserPreferences, updateUserProfile, upsertIntegration, upsertSavedView, watchInquiry } from "./repository.js";
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -20,9 +20,14 @@ app.get("/share/files/:token", async (c) => {
   await ensureDatabase(c.env);
   const shared = await getSharedFileForDownload(c.env, c.req.param("token"));
   if (!shared) return c.json({ error: "Share link is invalid, expired, or revoked." }, 404);
-  const object = await c.env.FILES.get(shared.file.storage_key);
+  let file = shared.file;
+  let object = await c.env.FILES.get(file.storage_key);
+  if (!object) {
+    file = await rebuildDocumentExportObject(c.env, file.id) || file;
+    object = await c.env.FILES.get(file.storage_key);
+  }
   if (!object) return c.json({ error: "Stored file object not found" }, 404);
-  return new Response(object.body, { headers: { ...fileDownloadHeaders(shared.file, object), "cache-control": "private, no-store" } });
+  return new Response(object.body, { headers: { ...fileDownloadHeaders(file, object), "cache-control": "private, no-store" } });
 });
 
 app.use("/api/*", secureHeaders());
@@ -300,9 +305,13 @@ app.get("/api/files/:id/thumbnail", async (c) => {
 
 app.get("/api/files/:id", async (c) => {
   if (!c.env?.FILES) return c.json({ error: "R2 binding FILES is not configured in this environment." }, 503);
-  const file = await getFileForDownload(c.env, accountId(c), c.req.param("id"));
+  let file = await getFileForDownload(c.env, accountId(c), c.req.param("id"));
   if (!file) return c.json({ error: "File not found" }, 404);
-  const object = await c.env.FILES.get(file.storage_key);
+  let object = await c.env.FILES.get(file.storage_key);
+  if (!object) {
+    file = await rebuildDocumentExportObject(c.env, file.id, accountId(c)) || file;
+    object = await c.env.FILES.get(file.storage_key);
+  }
   if (!object) return c.json({ error: "Stored file object not found" }, 404);
   return new Response(object.body, { headers: fileDownloadHeaders(file, object) });
 });
