@@ -9,7 +9,7 @@ export function registerPwa({ onUpdate } = {}) {
       wireUpdateChecks(registration, onUpdate);
       window.setTimeout(() => registration.update().catch(() => undefined), 3000);
     } catch (error) {
-      console.warn("DCDcom PWA registration failed", error);
+      console.warn("DC Decom PWA registration failed", error);
     }
   }, { once: true });
 

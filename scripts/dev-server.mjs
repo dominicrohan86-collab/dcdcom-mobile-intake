@@ -28,7 +28,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`DCDcom React app running at http://${host}:${port}`);
+  console.log(`DC Decom React app running at http://${host}:${port}`);
   console.log("Vite UI + local Hono-compatible API + SQLite-backed D1 + filesystem-backed R2");
 });
 

@@ -277,7 +277,7 @@ function GeneratedDocumentPreview({ document, inquiry }) {
   const sourceDocuments = metadata.generationContext?.sourceDocuments || metadata.generation_context?.source_documents || [];
   const comparison = versionComparison(currentVersion?.body || document.body || "", previousVersion?.body || "");
   return <article className="mx-auto max-w-[720px] rounded-lg border border-border bg-card p-5 text-card-foreground shadow-sm">
-    <p className="text-xs font-bold uppercase text-brand-muted-foreground">DCDecom</p>
+    <p className="text-xs font-bold uppercase text-brand-muted-foreground">DC Decom</p>
     <h1 className="mt-2 text-xl font-bold leading-tight text-card-foreground">{document.title}</h1>
     <div className="mt-3 grid gap-1 border-y border-border py-3 text-xs text-muted-foreground">
       <span>{inquiry?.title || "Inquiry document"}</span>
@@ -526,7 +526,7 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
     </div></Dialog>
     <Dialog open={dialog === "integrations"} onOpenChange={(open) => !open && setDialog(null)} title="Integrations"><div className="grid gap-2">{["crm", "email", "calendar"].map((provider) => { const connected = integrations?.some((item) => item.provider === provider && item.status === "connected" && (provider !== "calendar" || item.display_name === "Google Calendar")); return <Card key={provider} className="flex items-center justify-between gap-3 p-3"><div><b className="capitalize">{provider === "calendar" ? "Google Calendar" : provider}</b><span className="block text-xs text-muted-foreground">{connected ? "Connected" : "Not connected"}</span></div><Button size="sm" variant={connected ? "outline" : "default"} onClick={() => connectProvider(provider)} disabled={connect.isPending}>{connected ? "Reconnect" : "Connect"}</Button></Card>; })}</div></Dialog>
     <Dialog open={dialog === "help"} onOpenChange={(open) => !open && setDialog(null)} title="Help & support"><div className="grid gap-3">
-      <Card className="p-3"><b className="text-sm">DCDcom operations support</b><p className="mt-1 text-sm leading-5 text-muted-foreground">support@dcdcom.com</p></Card>
+      <Card className="p-3"><b className="text-sm">DC Decom operations support</b><p className="mt-1 text-sm leading-5 text-muted-foreground">support@dcdcom.com</p></Card>
       <Card className="p-3"><b className="text-sm">Workspace context</b><p className="mt-1 text-sm leading-5 text-muted-foreground">{user?.email || "Signed-in user"} · {roleLabel(user?.role)} · {rules.timezone}</p></Card>
     </div></Dialog>
   </>;

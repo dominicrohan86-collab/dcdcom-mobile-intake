@@ -55,17 +55,6 @@ export function App() {
       replaceUrl("/today");
     }
   });
-  const signup = useMutation({
-    mutationFn: client.signup,
-    onSuccess: async () => {
-      setNotice("");
-      setSignedOut(false);
-      setHistory([]);
-      setScreen("today");
-      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
-      replaceUrl("/today");
-    }
-  });
   const resetPassword = useMutation({
     mutationFn: client.resetPassword,
     onSuccess: async () => {
@@ -226,7 +215,7 @@ export function App() {
   }
 
   if (signedOut || (bootstrap.error && isUnauthorized(bootstrap.error))) return <>
-    <LoginScreen login={(payload) => login.mutate(payload)} signup={(payload) => signup.mutate(payload)} resetPassword={(payload) => resetPassword.mutate(payload)} acceptInvite={(payload) => acceptInvite.mutate(payload)} busy={login.isPending || signup.isPending || resetPassword.isPending || acceptInvite.isPending} error={login.error?.message || signup.error?.message || resetPassword.error?.message || acceptInvite.error?.message} notify={setNotice} />
+    <LoginScreen login={(payload) => login.mutate(payload)} resetPassword={(payload) => resetPassword.mutate(payload)} acceptInvite={(payload) => acceptInvite.mutate(payload)} busy={login.isPending || resetPassword.isPending || acceptInvite.isPending} error={login.error?.message || resetPassword.error?.message || acceptInvite.error?.message} notify={setNotice} />
     <ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} />
   </>;
   if (bootstrap.isLoading) return <><main className="grid min-h-dvh place-items-center bg-background text-sm text-muted-foreground"><span className="flex items-center gap-2"><span className="size-4 animate-spin rounded-full border-2 border-border border-t-brand" />Loading workspace...</span></main><ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} /></>;
@@ -250,7 +239,7 @@ export function App() {
   return <>
     <Shell screen={screen} navigate={go} title={titles[screen]} back={hasBack ? back : null} user={bootstrap.data.user} openNotification={openNotification} signOut={() => logout.mutate()} signingOut={logout.isPending}>
       {!online && <div aria-live="polite"><Notice tone="warning">You are offline. Drafts are saved on this device; network actions will resume when you reconnect.</Notice></div>}
-      {pwaUpdateAvailable && <div aria-live="polite"><Notice tone="warning"><span className="flex flex-wrap items-center justify-between gap-3"><span className="min-w-0 flex-1">A new version of DCDcom Intake is ready.</span><Button type="button" size="sm" variant="outline" onClick={() => { setPwaUpdateAvailable(false); applyPwaUpdate(); }}>Reload</Button></span></Notice></div>}
+      {pwaUpdateAvailable && <div aria-live="polite"><Notice tone="warning"><span className="flex flex-wrap items-center justify-between gap-3"><span className="min-w-0 flex-1">A new version of DC Decom Intake is ready.</span><Button type="button" size="sm" variant="outline" onClick={() => { setPwaUpdateAvailable(false); applyPwaUpdate(); }}>Reload</Button></span></Notice></div>}
       {content}
     </Shell>
     <ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} />
@@ -308,7 +297,7 @@ function actionAlertTitle(message, tone) {
 function isAuthRoute() {
   if (typeof window === "undefined") return false;
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
-  return ["/login", "/signup", "/reset-password", "/accept-invite"].includes(path);
+  return ["/login", "/reset-password", "/accept-invite"].includes(path);
 }
 
 function routeFromLocation() {

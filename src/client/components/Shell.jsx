@@ -48,14 +48,14 @@ export function Shell({ screen, navigate, children, title, back, user, openNotif
         <div className={cn("flex items-center rounded-xl border border-border bg-surface", navCollapsed ? "justify-center p-2" : "gap-3 p-3")}>
           <span className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-muted text-xs font-black text-brand-muted-foreground">{user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="size-full rounded-full object-cover" /> : initials}</span>
           <div className={cn("min-w-0", navCollapsed ? "sr-only" : "")}>
-            <p className="truncate text-sm font-bold">{user?.fullName || "DCDcom user"}</p>
+            <p className="truncate text-sm font-bold">{user?.fullName || "DC Decom user"}</p>
             <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
           </div>
         </div>
       </div>
     </aside>
 
-    <section className="relative mx-auto flex h-dvh w-full max-w-[1180px] flex-col overflow-hidden bg-background lg:max-w-none" aria-label="DCDcom application">
+    <section className="relative mx-auto flex h-dvh w-full max-w-[1180px] flex-col overflow-hidden bg-background lg:max-w-none" aria-label="DC Decom application">
       <header className="z-30 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-border bg-background/85 px-4 backdrop-blur lg:px-8">
         <div className="flex min-w-0 items-center gap-2">
           <Button variant="ghost" size="icon" className="hidden lg:inline-flex" onClick={() => setNavCollapsed((value) => !value)} aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"} title={navCollapsed ? "Expand navigation" : "Collapse navigation"}>
@@ -77,14 +77,14 @@ export function Shell({ screen, navigate, children, title, back, user, openNotif
               <div className="flex items-center gap-3 border-b border-border pb-3">
                 <span className="grid size-11 place-items-center rounded-full bg-brand-muted text-base font-black text-brand-muted-foreground">{initials}</span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-black">{user?.fullName || "DCDcom user"}</p>
+                  <p className="truncate text-sm font-black">{user?.fullName || "DC Decom user"}</p>
                   <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
                 </div>
               </div>
               <div className="grid gap-1 py-2 text-sm">
                 <button type="button" onClick={() => { setProfileOpen(false); navigate("more"); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-left font-semibold hover:bg-muted"><Settings size={16} className="text-muted-foreground" /> Preferences</button>
                 <button type="button" onClick={() => { setProfileOpen(false); navigate("more"); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-left font-semibold hover:bg-muted"><CircleHelp size={16} className="text-muted-foreground" /> Help</button>
-                <span className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-muted-foreground"><ShieldCheck size={16} /> {roleLabel(user?.role)} &middot; DCDcom</span>
+                <span className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-muted-foreground"><ShieldCheck size={16} /> {roleLabel(user?.role)} &middot; DC Decom</span>
               </div>
               <Button variant="outline" className="w-full justify-center" onClick={signOut} disabled={signingOut}><LogOut size={16} />{signingOut ? "Signing out..." : "Sign out"}</Button>
             </div>

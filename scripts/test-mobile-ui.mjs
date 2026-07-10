@@ -25,17 +25,17 @@ for (const nav of ["Today", "Inquiries", "Add", "Docs", "More"]) {
 }
 
 assert(files.app.includes("LoginScreen") && files.app.includes("isUnauthorized") && files.app.includes("replaceUrl(\"/login\")") && files.app.includes("isAuthRoute") && files.app.includes("enabled: !signedOut") && files.api.includes("login:"), "App should show a real signed-out login flow");
-for (const path of ["/login", "/signup", "/reset-password", "/accept-invite"]) {
+for (const path of ["/login", "/reset-password", "/accept-invite"]) {
   assert(files.app.includes(path), `Signed-out state should survive refresh on ${path}`);
 }
 for (const path of ["/today", "/inquiries", "/inquiries/new", "/inquiries/${encodeURIComponent(selectedId)}", "/inquiries/${encodeURIComponent(selectedId)}/follow-up", "/inquiries/${encodeURIComponent(selectedId)}/proposal", "/inquiries/${encodeURIComponent(selectedId)}/documents", "/profile"]) {
   assert(files.app.includes(path), `App should support URL-backed route ${path}`);
 }
-assert(files.login.includes("Continue with Google") && files.login.includes("Forgot password?") && files.login.includes("Reset password") && files.login.includes("Accept invite") && files.login.includes("Create account") && files.login.includes("Already have an account? Sign in") && files.login.includes("DCDcom"), "Login screen should support password, Google, reset, invite, and signup entry points");
-assert(files.api.includes("signup:") && files.app.includes("signup={(payload) => signup.mutate(payload)}") && files.login.includes("signup({ fullName, email, password })"), "Signup should be wired from login screen through client API");
+assert(files.login.includes("Continue with Google") && files.login.includes("Forgot password?") && files.login.includes("Reset password") && files.login.includes("Accept invite") && files.login.includes("Need access? Ask an administrator for an invite.") && files.login.includes("DC Decom"), "Login screen should support password, Google, reset, and invite-only entry points");
+assert(!files.api.includes("signup:") && !files.app.includes("signup={(payload) => signup.mutate(payload)}") && !files.login.includes("signup({ fullName, email, password })"), "Self-service signup must not be wired into the client");
 assert(!files.login.includes("Dcdcom2026!") && !files.login.includes("alex@dcdcom.com"), "Login screen should not prefill demo credentials");
-assert(!files.shell.includes("max-w-[430px]") && !files.shell.includes("rounded-[30px]") && files.shell.includes("lg:grid-cols-[240px_minmax(0,1fr)]"), "Production shell should remove the desktop phone-frame wrapper");
-assert(files.shell.includes("lg:hidden") && files.shell.includes("h-[72px]") && files.shell.includes("grid-cols-5"), "Bottom navigation should keep five stable mobile touch targets");
+assert(!files.shell.includes("max-w-[430px]") && !files.shell.includes("rounded-[30px]") && files.shell.includes("lg:grid-cols-[264px_minmax(0,1fr)]"), "Production shell should remove the desktop phone-frame wrapper");
+assert(files.shell.includes("lg:hidden") && files.shell.includes("h-[76px]") && files.shell.includes("grid-cols-5"), "Bottom navigation should keep five stable mobile touch targets");
 assert(files.shell.includes("<aside") && files.shell.includes("Sign out") && files.shell.includes("Help") && files.shell.includes("roleLabel"), "Desktop shell should expose a signed-in side rail and profile menu");
 assert(files.pipeline.includes("savedViews") && files.pipeline.includes("stageFromSavedView"), "Inquiry pipeline should expose user saved views");
 assert(files.docs.includes("Security") && files.docs.includes("Change password") && files.docs.includes("Active sessions") && files.docs.includes("Google identity"), "More/Profile should expose signed-in security state");

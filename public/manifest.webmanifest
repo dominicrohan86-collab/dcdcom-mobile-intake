@@ -1,6 +1,6 @@
 {
-  "name": "DCDcom Mobile Intake",
-  "short_name": "DCDcom",
+  "name": "DC Decom Mobile Intake",
+  "short_name": "DC Decom",
   "description": "Field-ready intake, estimates, proposals, and inquiry workflows for data-center decommissioning teams.",
   "id": "/?source=pwa",
   "start_url": "/today?source=pwa",
@@ -44,7 +44,7 @@
       "sizes": "1200x750",
       "type": "image/jpeg",
       "form_factor": "narrow",
-      "label": "DCDcom Mobile Intake workspace"
+      "label": "DC Decom Mobile Intake workspace"
     }
   ],
   "shortcuts": [

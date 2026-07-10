@@ -1,5 +1,5 @@
 import React from "react";
-import { CalendarCheck2, FileText, Globe2, LockKeyhole, Mail, Moon, Radar, ShieldCheck, Sun, UserPlus } from "lucide-react";
+import { CalendarCheck2, FileText, Globe2, LockKeyhole, Mail, Moon, Radar, ShieldCheck, Sun } from "lucide-react";
 import { Button, Field, Input } from "../components/ui";
 import { useTheme } from "../lib/theme";
 
@@ -9,7 +9,7 @@ const highlights = [
   [CalendarCheck2, "Field-ready scheduling", "Follow-ups, site visits, and calendar sync built for work on the ground."]
 ];
 
-export function LoginScreen({ login, signup, resetPassword, acceptInvite, busy, error, notify }) {
+export function LoginScreen({ login, resetPassword, acceptInvite, busy, error, notify }) {
   const { theme, toggle } = useTheme();
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -17,20 +17,14 @@ export function LoginScreen({ login, signup, resetPassword, acceptInvite, busy, 
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
   const authMessage = params.get("message");
-  const redirectTo = typeof window === "undefined" ? "/today" : (window.location.pathname === "/login" || window.location.pathname === "/signup" ? "/today" : `${window.location.pathname}${window.location.search}`);
+  const redirectTo = typeof window === "undefined" ? "/today" : (window.location.pathname === "/login" ? "/today" : `${window.location.pathname}${window.location.search}`);
   const path = typeof window === "undefined" ? "/login" : window.location.pathname;
   const token = params.get("token") || "";
-  const mode = path.includes("reset-password") ? "reset" : path.includes("accept-invite") ? "invite" : path.includes("signup") ? "signup" : "login";
+  const mode = path.includes("reset-password") ? "reset" : path.includes("accept-invite") ? "invite" : "login";
 
   function submit(event) {
     event.preventDefault();
     login({ email, password });
-  }
-
-  function submitSignup(event) {
-    event.preventDefault();
-    if (password !== confirmPassword) return;
-    signup({ fullName, email, password });
   }
 
   function forgotPassword() {
@@ -51,8 +45,8 @@ export function LoginScreen({ login, signup, resetPassword, acceptInvite, busy, 
     acceptInvite({ token, fullName, password });
   }
 
-  const heading = mode === "reset" ? "Reset password" : mode === "invite" ? "Accept invite" : mode === "signup" ? "Create account" : "Welcome back";
-  const subheading = mode === "reset" ? "Choose a new password for your DCDcom workspace." : mode === "invite" ? "Complete your profile and set a workspace password." : mode === "signup" ? "Open a personalized DCDcom decommissioning workspace." : "Sign in to your DCDcom command center.";
+  const heading = mode === "reset" ? "Reset password" : mode === "invite" ? "Accept invite" : "Welcome back";
+  const subheading = mode === "reset" ? "Choose a new password for your DC Decom workspace." : mode === "invite" ? "Complete your profile and set a workspace password." : "Sign in to your DC Decom command center.";
   const authAlert = error || authMessage;
   React.useEffect(() => {
     if (authAlert) notify?.({ tone: "error", message: authAlert });
@@ -64,7 +58,7 @@ export function LoginScreen({ login, signup, resetPassword, acceptInvite, busy, 
       <div className="pointer-events-none absolute inset-0 opacity-[0.14]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)", backgroundSize: "44px 44px" }} aria-hidden="true" />
 
       <div className="relative mb-7 flex items-center gap-3 sm:mb-0">
-        <img src="/dcdecom-logo.svg" alt="DCDecom" className="h-14 w-14 rounded-lg bg-white object-contain p-1 shadow-sm sm:h-16 sm:w-16" />
+        <img src="/dcdecom-logo.svg" alt="DC Decom" className="h-14 w-14 rounded-lg bg-white object-contain p-1 shadow-sm sm:h-16 sm:w-16" />
         <span className="eyebrow text-brand-200/80">Mobile Intake</span>
       </div>
 
@@ -92,7 +86,7 @@ export function LoginScreen({ login, signup, resetPassword, acceptInvite, busy, 
     <section className="flex items-center px-5 py-10 sm:px-10">
       <div className="mx-auto w-full max-w-[420px]">
         <div className="mb-8 flex items-center justify-between">
-          <span className="eyebrow text-muted-foreground">DCDcom Access</span>
+          <span className="eyebrow text-muted-foreground">DC Decom Access</span>
           <button type="button" onClick={toggle} className="grid size-10 place-items-center rounded-full border border-border text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
           </button>
@@ -115,29 +109,6 @@ export function LoginScreen({ login, signup, resetPassword, acceptInvite, busy, 
             </div>
           </Field>
           <Button type="submit" disabled={busy} className="min-h-12 w-full text-sm">{busy ? "Signing in..." : "Sign in"}</Button>
-        </form>}
-
-        {mode === "signup" && <form className="mt-7 grid gap-4" onSubmit={submitSignup}>
-          <Field label="Full name">
-            <div className="relative">
-              <UserPlus className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
-              <Input autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} className="pl-10" placeholder="Jordan Fields" required autoFocus />
-            </div>
-          </Field>
-          <Field label="Email">
-            <div className="relative">
-              <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
-              <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} className="pl-10" placeholder="you@company.com" required />
-            </div>
-          </Field>
-          <Field label="Password">
-            <div className="relative">
-              <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
-              <Input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} className="pl-10" minLength={10} placeholder="At least 10 characters" required />
-            </div>
-          </Field>
-          <Field label="Confirm password" error={password && confirmPassword && password !== confirmPassword ? "Passwords do not match." : null}><Input type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={10} required /></Field>
-          <Button type="submit" disabled={busy || password !== confirmPassword} className="min-h-12 w-full">{busy ? "Creating account..." : "Create account"}</Button>
         </form>}
 
         {mode === "reset" && <form className="mt-7 grid gap-4" onSubmit={submitReset}>
@@ -164,11 +135,10 @@ export function LoginScreen({ login, signup, resetPassword, acceptInvite, busy, 
 
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-sm">
             <button type="button" onClick={forgotPassword} disabled={!email.trim()} className="font-semibold text-brand transition-colors hover:text-brand-strong disabled:text-muted-foreground">Forgot password?</button>
-            <a href="/signup" className="font-semibold text-brand transition-colors hover:text-brand-strong">Create an account</a>
+            <span className="text-muted-foreground">Need access? Ask an administrator for an invite.</span>
           </div>
         </>}
-        {mode === "signup" && <a href="/login" className="mt-6 inline-flex text-sm font-bold text-brand hover:text-brand-strong">Already have an account? Sign in</a>}
-        {mode !== "login" && mode !== "signup" && <a href="/login" className="mt-6 inline-flex text-sm font-bold text-brand hover:text-brand-strong">Back to sign in</a>}
+        {mode !== "login" && <a href="/login" className="mt-6 inline-flex text-sm font-bold text-brand hover:text-brand-strong">Back to sign in</a>}
       </div>
     </section>
   </main>;

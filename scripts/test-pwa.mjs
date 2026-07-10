@@ -1,8 +1,8 @@
 import { access, readFile } from "node:fs/promises";
 
 const manifest = JSON.parse(await readFile("public/manifest.webmanifest", "utf8"));
-assert(manifest.name === "DCDcom Mobile Intake", "Manifest should use the production app name");
-assert(manifest.short_name === "DCDcom", "Manifest should include a short app name");
+assert(manifest.name === "DC Decom Mobile Intake", "Manifest should use the production app name");
+assert(manifest.short_name === "DC Decom", "Manifest should include a short app name");
 assert(manifest.start_url.startsWith("/today"), "Manifest should launch into the Today workspace");
 assert(manifest.scope === "/", "Manifest scope should cover app routes");
 assert(manifest.display === "standalone", "Manifest should install as a standalone app");
@@ -37,7 +37,7 @@ for (const token of ["self.__DCDCOM_PRECACHE_URLS", "API_PREFIX = \"/api/\"", "S
 }
 
 const app = await readFile("src/client/App.jsx", "utf8");
-assert(app.includes("registerPwa") && app.includes("applyPwaUpdate") && app.includes("A new version of DCDcom Intake is ready"), "App should register the PWA and expose update reload behavior");
+assert(app.includes("registerPwa") && app.includes("applyPwaUpdate") && app.includes("A new version of DC Decom Intake is ready"), "App should register the PWA and expose update reload behavior");
 
 const buildScript = await readFile("scripts/build.mjs", "utf8");
 assert(buildScript.includes("injectServiceWorkerPrecache") && buildScript.includes("self.__DCDCOM_PRECACHE_URLS"), "Build should inject hashed static assets into the service worker");

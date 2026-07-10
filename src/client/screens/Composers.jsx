@@ -491,7 +491,7 @@ const documentConfigs = [
     icon: FileText,
     reference: "Use the proposal brief: executive summary, scope, assumptions, commercial range, exclusions, customer responsibilities, and next steps.",
     exampleTitle: "Proposal preview",
-    example: ["Executive Summary", "DCDecom will decommission the customer suite, coordinate removal logistics, recycle eligible materials, and provide closeout documentation.", "Commercial Range", "Preliminary pricing is shown as a range until access, equipment counts, and disconnect responsibility are confirmed."],
+    example: ["Executive Summary", "DC Decom will decommission the customer suite, coordinate removal logistics, recycle eligible materials, and provide closeout documentation.", "Commercial Range", "Preliminary pricing is shown as a range until access, equipment counts, and disconnect responsibility are confirmed."],
     required: ["Site address and access", "Service scope", "Equipment inventory", "Timeline", "Commercial range"]
   },
   {
@@ -531,7 +531,7 @@ function DocumentExample({ config }) {
   return <section className="mt-5 rounded-lg border border-border bg-muted/50 p-4">
     <div className="flex items-center gap-2 text-sm font-bold text-foreground"><Icon size={18} className="text-brand" />{config.exampleTitle}</div>
     <div className="mt-3 rounded-md border border-border bg-card p-3">
-      <p className="text-xs font-bold uppercase text-brand-muted-foreground">DCDecom</p>
+      <p className="text-xs font-bold uppercase text-brand-muted-foreground">DC Decom</p>
       <div className="mt-3 space-y-3">{config.example.map((line, index) => index % 2 === 0 ? <h4 key={line} className="text-sm font-bold text-foreground">{line}</h4> : <p key={line} className="text-sm leading-5 text-muted-foreground">{line}</p>)}</div>
     </div>
   </section>;

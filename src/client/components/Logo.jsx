@@ -18,7 +18,7 @@ export function LogoMark({ size = "md", className }) {
 
 export function Wordmark({ className, subtitle = true }) {
   return <span className={cn("flex flex-col leading-none", className)}>
-    <strong className="text-lg font-black tracking-tight">DCD<span className="text-brand">com</span></strong>
+    <strong className="text-lg font-black tracking-tight">DC <span className="text-brand">Decom</span></strong>
     {subtitle && <span className="eyebrow mt-1 text-muted-foreground">Mobile Intake</span>}
   </span>;
 }

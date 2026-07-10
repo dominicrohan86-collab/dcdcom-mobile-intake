@@ -139,7 +139,7 @@ const INTAKE_SCHEMA = {
   }
 };
 
-const INTAKE_DEVELOPER_PROMPT = `You are DCDecom's senior intake estimator. Convert customer emails, call notes, text messages, manual notes, and extracted document or photo text into complete, structured inquiry data.
+const INTAKE_DEVELOPER_PROMPT = `You are DC Decom's senior intake estimator. Convert customer emails, call notes, text messages, manual notes, and extracted document or photo text into complete, structured inquiry data.
 
 CORE RULES
 1. Extract only information stated or strongly supported by the source.
@@ -306,11 +306,11 @@ const FOLLOW_UP_RESPONSE_GOALS = {
   },
   proposal_ready: {
     label: "Proposal-ready",
-    intent: "Confirm that DCDecom has enough information to proceed toward a proposal while naming any assumptions or final dependencies.",
+    intent: "Confirm that DC Decom has enough information to proceed toward a proposal while naming any assumptions or final dependencies.",
     useWhen: "Use when the inquiry has strong scope detail and the next step is proposal preparation, internal review, or final dependency confirmation.",
     guidance: [
       "Summarize the understood project scope in a concise paragraph.",
-      "State that DCDecom is preparing the proposal or next work product.",
+      "State that DC Decom is preparing the proposal or next work product.",
       "Call out any remaining assumptions or dependencies without making the email feel blocked.",
       "Avoid asking broad discovery questions; focus on final confirmations only.",
       "Close with expected next action and timing."
@@ -319,7 +319,7 @@ const FOLLOW_UP_RESPONSE_GOALS = {
 };
 
 const WORK_PRODUCT_DEVELOPER_PROMPT = [
-  "You are DCDecom's senior estimator and customer success drafter.",
+  "You are DC Decom's senior estimator and customer success drafter.",
   "Generate only practical, customer-ready work product content for data center decommissioning workflows.",
   "Use the supplied workProductReference as the controlling document brief for purpose, required sections, required data, and quality bar.",
   "For follow_up_email, use responseGoal and responseGoalReference as controlling instructions for intent, source selection, question selection, and call to action.",
@@ -769,7 +769,7 @@ function fallbackFollowUpEmail({ inquiry, missingLabels, sourceFiles, summary, r
       usefulMissing.length ? `Before we arrive, it would also help to confirm: ${usefulMissing.join("; ")}.` : "If there are any escort, PPE, photo, or loading-dock requirements we should plan around, please send those over before the visit.",
       "",
       "Best regards,",
-      "DCDecom Team"
+      "DC Decom Team"
     ].join("\n");
   }
 
@@ -786,7 +786,7 @@ function fallbackFollowUpEmail({ inquiry, missingLabels, sourceFiles, summary, r
       "Our next step is to prepare the response package and call out any remaining dependencies clearly for your review.",
       "",
       "Best regards,",
-      "DCDecom Team"
+      "DC Decom Team"
     ].join("\n");
   }
 
@@ -806,7 +806,7 @@ function fallbackFollowUpEmail({ inquiry, missingLabels, sourceFiles, summary, r
     "Once we have that, we can tighten the scope, schedule, and pricing assumptions and move the project forward.",
     "",
     "Best regards,",
-    "DCDecom Team"
+    "DC Decom Team"
   ].join("\n");
 }
 

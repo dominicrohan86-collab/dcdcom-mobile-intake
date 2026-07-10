@@ -25,7 +25,6 @@ const api = ky.create({
 
 export const client = {
   login: (json) => api.post("auth/login", { json }).json(),
-  signup: (json) => api.post("auth/signup", { json }).json(),
   logout: () => api.post("auth/logout").json(),
   session: () => api.get("auth/session").json(),
   forgotPassword: (json) => api.post("auth/forgot-password", { json }).json(),

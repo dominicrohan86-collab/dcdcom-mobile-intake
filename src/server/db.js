@@ -8,10 +8,20 @@ export async function ensureDatabase(env) {
   if (!env?.DB) return false;
   if (!prepared.has(env.DB)) {
     await ensureProductionAuthStorage(env.DB);
+    await retireLegacyDemoIdentity(env.DB);
     await ensureNotificationStorage(env.DB);
     prepared.add(env.DB);
   }
   return true;
+}
+
+async function retireLegacyDemoIdentity(DB) {
+  const legacyUserId = "user_alex_dcdcom_com";
+  const revokedAt = new Date().toISOString();
+  await DB.prepare("DELETE FROM password_credentials WHERE user_id = ?").bind(legacyUserId).run().catch(() => {});
+  await DB.prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").bind(revokedAt, legacyUserId).run().catch(() => {});
+  await DB.prepare("UPDATE password_reset_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").bind(revokedAt, legacyUserId).run().catch(() => {});
+  await DB.prepare("UPDATE users SET is_active = false, updated_at = ? WHERE id = ?").bind(revokedAt, legacyUserId).run().catch(() => {});
 }
 
 export function getDb(env) {
@@ -36,21 +46,6 @@ export function json(data, init = 200) {
       ...(responseInit.headers || {})
     }
   });
-}
-
-export function readUser(request) {
-  const email = request.headers.get("oai-authenticated-user-email") || "alex@dcdcom.com";
-  const encodedName = request.headers.get("oai-authenticated-user-full-name");
-  const encoding = request.headers.get("oai-authenticated-user-full-name-encoding");
-  let fullName = "Alex Morgan";
-  if (encodedName && encoding === "percent-encoded-utf-8") {
-    try {
-      fullName = decodeURIComponent(encodedName);
-    } catch {
-      fullName = email;
-    }
-  }
-  return { id: `user_${email.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`, email, fullName };
 }
 
 async function ensureNotificationStorage(DB) {

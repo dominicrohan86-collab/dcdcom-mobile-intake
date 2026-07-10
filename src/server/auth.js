@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { getDb, json } from "./db.js";
-import { accounts, auditLog, authIdentities, invites, oauthStates, passwordCredentials, passwordResetTokens, sessions, userPreferences, users } from "../../db/drizzle-schema.js";
+import { auditLog, authIdentities, invites, oauthStates, passwordCredentials, passwordResetTokens, sessions, userPreferences, users } from "../../db/drizzle-schema.js";
 
 const WRITE_ROLES = new Set(["admin", "estimator", "project_manager", "sales"]);
 const ADMIN_ROLES = new Set(["admin", "project_manager"]);
@@ -11,15 +11,12 @@ const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PASSWORD_ALGORITHM = "pbkdf2_sha256";
 const PASSWORD_ITERATIONS = 50_000;
-const LOCAL_SESSION_SECRET = "local-development-session-secret";
-const DEMO_LOGIN_EMAIL = "alex@dcdcom.com";
-const DEMO_LOGIN_PASSWORD = "Dcdcom2026!";
+const MIN_SESSION_SECRET_LENGTH = 32;
 
 export async function authenticateRequest(env, request) {
-  const secret = env.AUTH_SESSION_SECRET || "";
-  if (secret) return authenticateSignedSession(env, request, secret);
-  if (bearerToken(request) || cookieToken(request, SESSION_COOKIE)) return authenticateSignedSession(env, request, LOCAL_SESSION_SECRET);
-  return authenticateTrustedDevHeaders(env, request);
+  const secret = sessionSecret(env);
+  if (!secret) return { response: authenticationConfigurationError() };
+  return authenticateSignedSession(env, request, secret);
 }
 
 export async function requireWriteAccess(env, accountId, user) {
@@ -36,11 +33,11 @@ export async function readCurrentUser(env, accountId, user) {
 }
 
 export async function loginWithPassword(env, request, payload) {
+  if (!sessionSecret(env)) return authenticationConfigurationError();
   const email = String(payload.email || "").trim().toLowerCase();
   const password = String(payload.password || "");
   const accountId = safeAccountId(payload.accountId || env.DEFAULT_ACCOUNT_ID || DEFAULT_ACCOUNT_ID);
   if (!email || !password) return json({ error: "Email and password are required." }, 400);
-  await ensureDemoPasswordCredential(env, accountId, email, password);
 
   const db = getDb(env);
   const [row] = await db
@@ -85,27 +82,7 @@ export async function loginWithPassword(env, request, payload) {
 }
 
 export async function signupWithPassword(env, request, payload) {
-  const email = String(payload.email || "").trim().toLowerCase();
-  const password = String(payload.password || "");
-  const fullName = normalizeFullName(payload.fullName, email);
-  const accountId = safeAccountId(payload.accountId || env.DEFAULT_ACCOUNT_ID || DEFAULT_ACCOUNT_ID);
-  if (!email || !password || !String(payload.fullName || "").trim()) return json({ error: "Name, email, and password are required." }, 400);
-
-  const db = getDb(env);
-  const [existing] = await db.select({ id: users.id, isActive: users.isActive }).from(users).where(eq(users.email, email)).limit(1);
-  if (existing) return json({ error: "An account already exists for this email. Sign in or reset your password." }, 409);
-
-  await db.insert(accounts).values({ id: accountId, name: accountId === DEFAULT_ACCOUNT_ID ? "DCDcom" : `DCDcom ${accountId}`, domain: "dcdcom.com" }).onConflictDoNothing();
-  const [existingWorkspaceUser] = await db.select({ id: users.id }).from(users).where(eq(users.accountId, accountId)).limit(1);
-  const role = existingWorkspaceUser ? "estimator" : "project_manager";
-  const userId = uniqueUserId(email);
-  const passwordHash = await hashPassword(password);
-  await db.insert(users).values({ id: userId, accountId, email, fullName, role });
-  await db.insert(userPreferences).values({ userId }).onConflictDoNothing();
-  await db.insert(passwordCredentials).values({ userId, passwordHash, passwordAlgorithm: PASSWORD_ALGORITHM });
-  const session = await createSignedSession(env, request, { id: userId, accountId, email, fullName, role, avatarUrl: null });
-  await logAuthEvent(env, accountId, userId, "auth.signup", { provider: "password", role });
-  return json({ ok: true, user: toCurrentUserPayload({ id: userId, accountId, email, fullName, role }), session: { expiresAt: session.expiresAt } }, { status: 201, headers: { "set-cookie": session.cookie } });
+  return json({ error: "Self-service enrollment is disabled. Ask a workspace administrator for an invitation." }, 403);
 }
 
 export async function logoutSession(env, request) {
@@ -152,6 +129,7 @@ export async function requestPasswordReset(env, request, payload) {
 }
 
 export async function resetPassword(env, request, payload) {
+  if (!sessionSecret(env)) return authenticationConfigurationError();
   const token = String(payload.token || "");
   const password = String(payload.password || "");
   const tokenHash = await sha256Hex(token);
@@ -182,6 +160,7 @@ export async function resetPassword(env, request, payload) {
 }
 
 export async function acceptInvite(env, request, payload) {
+  if (!sessionSecret(env)) return authenticationConfigurationError();
   const token = String(payload.token || "");
   const db = getDb(env);
   const [invite] = await db.select().from(invites).where(eq(invites.tokenHash, await sha256Hex(token))).limit(1);
@@ -275,6 +254,7 @@ export async function updateAccountUser(env, accountId, actorUserId, userId, pay
 }
 
 export async function createGoogleLoginRedirect(env, request) {
+  if (!sessionSecret(env)) return authenticationConfigurationError();
   const googleConfig = googleLoginConfig(env, request);
   if (!googleConfig.clientId) return json({ error: "Google Sign-In is not configured for this environment." }, 503);
   const url = new URL(request.url);
@@ -302,6 +282,7 @@ export async function createGoogleLoginRedirect(env, request) {
 }
 
 export async function completeGoogleLogin(env, request) {
+  if (!sessionSecret(env)) return redirectAuthFailure(request, "Authentication is unavailable because the server is not securely configured.");
   const googleConfig = googleLoginConfig(env, request);
   if (!googleConfig.clientId || !googleConfig.clientSecret) return redirectAuthFailure(request, "Google Sign-In is not configured.");
   const url = new URL(request.url);
@@ -332,7 +313,8 @@ export async function completeGoogleLogin(env, request) {
   const db = getDb(env);
   const googleFullName = googleProfileName(claims, email);
   const [existingUser] = await db.select().from(users).where(and(eq(users.accountId, accountId), eq(users.email, email))).limit(1);
-  const user = existingUser || await createGoogleUser(env, accountId, email, claims, googleFullName);
+  if (!existingUser) return redirectAuthFailure(request, "Access is by invitation. Ask a workspace administrator to invite this Google account first.");
+  const user = existingUser;
   if (!user.isActive) return redirectAuthFailure(request, "This account is inactive. Ask an administrator to restore access.");
   await db.insert(authIdentities).values({
     id: `auth_${crypto.randomUUID()}`,
@@ -347,26 +329,8 @@ export async function completeGoogleLogin(env, request) {
   const fullName = shouldRefreshProfileName(user.fullName, email) ? googleFullName : user.fullName;
   await db.update(users).set({ fullName, lastLoginAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), avatarUrl: user.avatarUrl || claims.picture || null, updatedAt: new Date().toISOString() }).where(eq(users.id, user.id));
   const session = await createSignedSession(env, request, toPublicUser({ ...user, fullName, avatarUrl: user.avatarUrl || claims.picture || null }));
-  await logAuthEvent(env, accountId, user.id, existingUser ? "auth.login" : "auth.signup", { provider: "google" });
+  await logAuthEvent(env, accountId, user.id, "auth.login", { provider: "google" });
   return new Response(null, { status: 302, headers: { location: safeRedirect(stored.redirectTo), "set-cookie": session.cookie } });
-}
-
-async function createGoogleUser(env, accountId, email, claims, fullName = googleProfileName(claims, email)) {
-  const db = getDb(env);
-  await db.insert(accounts).values({ id: accountId, name: accountId === DEFAULT_ACCOUNT_ID ? "DCDcom" : `DCDcom ${accountId}`, domain: "dcdcom.com" }).onConflictDoNothing();
-  const [existingWorkspaceUser] = await db.select({ id: users.id }).from(users).where(eq(users.accountId, accountId)).limit(1);
-  const user = {
-    id: uniqueUserId(email),
-    accountId,
-    email,
-    fullName,
-    role: existingWorkspaceUser ? "estimator" : "project_manager",
-    avatarUrl: claims.picture || null,
-    isActive: true
-  };
-  await db.insert(users).values(user);
-  await db.insert(userPreferences).values({ userId: user.id }).onConflictDoNothing();
-  return user;
 }
 
 async function requireRole(env, accountId, user, allowedRoles) {
@@ -389,13 +353,14 @@ async function authenticateSignedSession(env, request, secret) {
   } catch (error) {
     return { response: json({ error: "Invalid authentication token.", detail: error.message }, 401) };
   }
-  if (payload.sid) {
-    const validSession = await findValidSession(env, token, payload.sid);
-    if (!validSession) return { response: json({ error: "Session expired. Please sign in again." }, 401) };
-  }
+  if (!payload.sid) return { response: json({ error: "Invalid authentication token." }, 401) };
+  const validSession = await findValidSession(env, token, payload.sid);
+  if (!validSession || validSession.userId !== String(payload.sub || payload.userId || "") || validSession.accountId !== safeAccountId(payload.accountId || payload.account_id || "")) return { response: json({ error: "Session expired. Please sign in again." }, 401) };
   const email = String(payload.email || "").toLowerCase();
   const accountId = safeAccountId(payload.accountId || payload.account_id || env.DEFAULT_ACCOUNT_ID || DEFAULT_ACCOUNT_ID);
   if (!email || !accountId) return { response: json({ error: "Authentication token is missing required account identity." }, 401) };
+  const currentUser = await readCurrentUser(env, accountId, { id: validSession.userId });
+  if (!currentUser?.is_active || currentUser.email.toLowerCase() !== email) return { response: json({ error: "Session expired. Please sign in again." }, 401) };
   return {
     accountId,
     user: {
@@ -405,31 +370,6 @@ async function authenticateSignedSession(env, request, secret) {
       role: payload.role || null,
       avatarUrl: payload.avatarUrl || null,
       authMode: "signed_session"
-    }
-  };
-}
-
-function authenticateTrustedDevHeaders(env, request) {
-  const email = request.headers.get("oai-authenticated-user-email") || "alex@dcdcom.com";
-  const encodedName = request.headers.get("oai-authenticated-user-full-name");
-  const encoding = request.headers.get("oai-authenticated-user-full-name-encoding");
-  let fullName = "Alex Morgan";
-  if (encodedName && encoding === "percent-encoded-utf-8") {
-    try {
-      fullName = decodeURIComponent(encodedName);
-    } catch {
-      fullName = email;
-    }
-  }
-  const accountHeader = request.headers.get("x-dcdcom-account-id");
-  const accountId = safeAccountId(env.DEFAULT_ACCOUNT_ID || accountHeader || DEFAULT_ACCOUNT_ID);
-  return {
-    accountId,
-    user: {
-      id: `user_${email.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
-      email,
-      fullName,
-      authMode: "trusted_dev_headers"
     }
   };
 }
@@ -446,7 +386,7 @@ function cookieToken(request, name) {
 }
 
 async function findValidSession(env, token, id) {
-  const [session] = await getDb(env).select({ id: sessions.id, expiresAt: sessions.expiresAt, revokedAt: sessions.revokedAt }).from(sessions).where(and(eq(sessions.id, id), eq(sessions.tokenHash, await sha256Hex(token)), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date().toISOString()))).limit(1);
+  const [session] = await getDb(env).select({ id: sessions.id, userId: sessions.userId, accountId: sessions.accountId, expiresAt: sessions.expiresAt, revokedAt: sessions.revokedAt }).from(sessions).where(and(eq(sessions.id, id), eq(sessions.tokenHash, await sha256Hex(token)), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date().toISOString()))).limit(1);
   return session || null;
 }
 
@@ -461,7 +401,8 @@ async function verifySignedToken(secret, token) {
 }
 
 async function createSignedSession(env, request, user) {
-  const secret = env.AUTH_SESSION_SECRET || LOCAL_SESSION_SECRET;
+  const secret = sessionSecret(env);
+  if (!secret) throw new Error("AUTH_SESSION_SECRET is not configured.");
   const sessionId = `sess_${crypto.randomUUID()}`;
   const expiresAt = new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString();
   const exp = Math.floor(new Date(expiresAt).getTime() / 1000);
@@ -535,30 +476,6 @@ async function sha256Hex(value) {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function ensureDemoPasswordCredential(env, accountId, email, password) {
-  const demoEmail = String(env.DEFAULT_LOGIN_EMAIL || DEMO_LOGIN_EMAIL).toLowerCase();
-  const demoPassword = String(env.DEFAULT_LOGIN_PASSWORD || DEMO_LOGIN_PASSWORD);
-  if (email !== demoEmail || password !== demoPassword) return;
-  const db = getDb(env);
-  await db.insert(accounts).values({ id: accountId, name: accountId === DEFAULT_ACCOUNT_ID ? "DCDcom" : `DCDcom ${accountId}`, domain: "dcdcom.com" }).onConflictDoNothing();
-  const userId = `user_${email.replace(/[^a-z0-9]+/g, "_")}`;
-  await db.insert(users).values({ id: userId, accountId, email, fullName: "Alex Morgan", role: "project_manager" }).onConflictDoNothing();
-  await db.insert(userPreferences).values({ userId }).onConflictDoNothing();
-  const [credential] = await db.select({ userId: passwordCredentials.userId, passwordHash: passwordCredentials.passwordHash }).from(passwordCredentials).where(eq(passwordCredentials.userId, userId)).limit(1);
-  if (!credential || storedPasswordIterations(credential.passwordHash) > PASSWORD_ITERATIONS) {
-    const passwordHash = await hashPassword(demoPassword);
-    await db.insert(passwordCredentials).values({ userId, passwordHash, passwordAlgorithm: PASSWORD_ALGORITHM }).onConflictDoUpdate({
-      target: passwordCredentials.userId,
-      set: { passwordHash, passwordAlgorithm: PASSWORD_ALGORITHM, passwordUpdatedAt: new Date().toISOString(), mustResetPassword: false, failedAttemptCount: 0, lockedUntil: null, updatedAt: new Date().toISOString() }
-    });
-  }
-}
-
-function storedPasswordIterations(stored) {
-  const [algorithm, iterationsText] = String(stored || "").split("$");
-  return algorithm === PASSWORD_ALGORITHM ? Number(iterationsText || 0) : 0;
-}
-
 async function logAuthEvent(env, accountId, userId, action, metadata = {}) {
   await getDb(env).insert(auditLog).values({
     id: `audit_${crypto.randomUUID()}`,
@@ -587,14 +504,23 @@ async function deliverAuthLink(env, type, payload) {
 }
 
 function exposeLocalAuthLinks(env) {
-  return env.EXPOSE_AUTH_LINKS === "true" || (!env.AUTH_SESSION_SECRET && !env.AUTH_LINK_WEBHOOK && !env.EMAIL_PROVIDER_WEBHOOK);
+  return env.EXPOSE_AUTH_LINKS === "true";
+}
+
+function sessionSecret(env) {
+  const secret = String(env?.AUTH_SESSION_SECRET || "").trim();
+  return secret.length >= MIN_SESSION_SECRET_LENGTH ? secret : "";
+}
+
+function authenticationConfigurationError() {
+  return json({ error: "Authentication is unavailable because the server is not securely configured." }, 503);
 }
 
 function toCurrentUserPayload(user) {
   return {
     id: user.id,
     accountId: user.account_id || user.accountId,
-    accountName: user.accountName || "DCDcom",
+    accountName: user.accountName || "DC Decom",
     email: user.email,
     fullName: user.full_name || user.fullName,
     role: user.role,
@@ -642,14 +568,6 @@ function randomToken(byteLength = 32) {
   return base64UrlEncode(crypto.getRandomValues(new Uint8Array(byteLength)));
 }
 
-function uniqueUserId(email) {
-  return `user_${email.replace(/[^a-z0-9]+/g, "_")}_${crypto.randomUUID().slice(0, 8)}`;
-}
-
-function normalizeFullName(value, email = "") {
-  return cleanName(value) || nameFromEmail(email);
-}
-
 function googleProfileName(claims, email) {
   const directName = cleanName(claims.name);
   if (directName) return directName;
@@ -670,12 +588,12 @@ function cleanName(value) {
 }
 
 function nameFromEmail(email) {
-  const localPart = String(email || "").split("@")[0] || "DCDcom User";
+  const localPart = String(email || "").split("@")[0] || "DC Decom User";
   return localPart
     .split(/[._-]+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ") || "DCDcom User";
+    .join(" ") || "DC Decom User";
 }
 
 async function pkceChallenge(verifier) {

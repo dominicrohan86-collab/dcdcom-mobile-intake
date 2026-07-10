@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "./db.js";
-import { accounts, aiSummaries, communications, companies, contacts, inquiries, inquirySources, inquiryWatchers, missingRequirements, sites, userPreferences, userSavedViews, users } from "../../db/drizzle-schema.js";
+import { accounts, aiSummaries, communications, companies, contacts, inquiries, inquirySources, inquiryWatchers, missingRequirements, sites, userPreferences, userSavedViews } from "../../db/drizzle-schema.js";
 import { createActivity } from "./repository.js";
 
 export const ACCOUNT_ID = "acct_dcdcom";
@@ -8,8 +8,6 @@ export const ACCOUNT_ID = "acct_dcdcom";
 export async function ensureBootstrap(env, user, accountId = ACCOUNT_ID) {
   const db = getDb(env);
   const seed = seedIds(accountId);
-  await db.insert(accounts).values({ id: accountId, name: accountId === ACCOUNT_ID ? "DCDcom" : `DCDcom ${accountId}`, domain: "dcdcom.com" }).onConflictDoNothing();
-  await db.insert(users).values({ id: user.id, accountId, email: user.email, fullName: user.fullName, role: user.role || "project_manager" }).onConflictDoNothing();
   await db.insert(userPreferences).values({ userId: user.id }).onConflictDoNothing();
   await seedSavedViews(db, user.id);
   const [preference] = await db.select({ settingsJson: userPreferences.settingsJson }).from(userPreferences).where(eq(userPreferences.userId, user.id)).limit(1);
@@ -48,7 +46,7 @@ export async function readinessReport(env, user, accountId = ACCOUNT_ID) {
     { key: "schema", ok: true, detail: "42 Drizzle-managed database tables available." },
     { key: "account", ok: Boolean(account), detail: account ? `Account ${accountId} is present.` : `Account ${accountId} bootstrap is missing.` },
     { key: "user_identity", ok: Boolean(user?.email), detail: user?.email ? `Authenticated as ${user.email}.` : "No user identity detected." },
-    { key: "auth_mode", ok: Boolean(env.AUTH_SESSION_SECRET || user?.authMode === "trusted_dev_headers"), warningOnly: true, detail: env.AUTH_SESSION_SECRET ? "Signed session authentication is enforced." : "Using trusted development identity headers; configure AUTH_SESSION_SECRET before production." },
+    { key: "auth_mode", ok: String(env.AUTH_SESSION_SECRET || "").trim().length >= 32, detail: String(env.AUTH_SESSION_SECRET || "").trim().length >= 32 ? "Signed session authentication is enforced." : "AUTH_SESSION_SECRET must be configured with at least 32 characters." },
     { key: "openai_key", ok: Boolean(env.OPENAI_API_KEY), warningOnly: true, detail: env.OPENAI_API_KEY ? "Live OpenAI extraction is configured." : "OPENAI_API_KEY is missing; fallback AI will be used." },
     { key: "google_calendar_oauth", ok: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET), warningOnly: true, detail: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? "Google Calendar OAuth is configured." : "Google Calendar OAuth credentials are missing; calendar sync is unavailable." }
   ];

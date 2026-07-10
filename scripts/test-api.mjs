@@ -10,22 +10,43 @@ const root = await mkdtemp(join(tmpdir(), "dcdcom-api-"));
 
 try {
   const env = await createLocalEnv({ root });
-  const secureEnv = { ...env, AUTH_SESSION_SECRET: "test-auth-secret" };
+  const adminPassword = `test-${crypto.randomUUID()}-A1!`;
+  const tenantPassword = `test-${crypto.randomUUID()}-A1!`;
+  const legacyDemoPassword = `test-${crypto.randomUUID()}-A1!`;
+  await provisionUser(env, { id: "user_test_admin", accountId: "acct_dcdcom", email: "admin@dcdcom.test", fullName: "Test Administrator", role: "project_manager", password: adminPassword });
+  await provisionUser(env, { id: "user_test_tenant", accountId: "acct_second", email: "tenant@dcdcom.test", fullName: "Tenant User", role: "project_manager", password: tenantPassword });
+  await provisionUser(env, { id: "user_alex_dcdcom_com", accountId: "acct_dcdcom", email: "alex@dcdcom.com", fullName: "Alex Morgan", role: "project_manager", password: legacyDemoPassword });
+  const secureEnv = env;
+  const insecureLogin = await request({ ...env, AUTH_SESSION_SECRET: "too-short" }, "POST", "/api/auth/login", { email: "admin@dcdcom.test", password: adminPassword });
+  assert(insecureLogin.status === 503, "authentication must fail closed when AUTH_SESSION_SECRET is absent or too short");
+  const insecureGoogleCallback = await request({ ...env, AUTH_SESSION_SECRET: "too-short" }, "GET", "/api/auth/google/callback");
+  assert(insecureGoogleCallback.status === 302 && !insecureGoogleCallback.headers.get("set-cookie"), "Google authentication must fail closed when AUTH_SESSION_SECRET is absent or too short");
   const unauthenticated = await request(secureEnv, "GET", "/api/bootstrap");
   assert(unauthenticated.status === 401, "signed auth mode should reject missing session tokens");
-  const signedPrimaryHeaders = await authHeaders(secureEnv.AUTH_SESSION_SECRET, { email: "alex@dcdcom.com", fullName: "Alex Production", accountId: "acct_dcdcom" });
+  const trustedHeaderAttempt = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: { "oai-authenticated-user-email": "attacker@invalid.test" } });
+  assert(trustedHeaderAttempt.status === 401, "identity headers must not authenticate requests");
+  const retiredDemoLogin = await request(secureEnv, "POST", "/api/auth/login", { email: "alex@dcdcom.com", password: legacyDemoPassword });
+  assert(retiredDemoLogin.status === 401, "the legacy demo account must not retain a usable password credential");
+  const retiredDemoCredential = await env.DB.prepare("SELECT user_id FROM password_credentials WHERE user_id = ?").bind("user_alex_dcdcom_com").first();
+  assert(!retiredDemoCredential, "the legacy demo password credential must be removed during startup");
+  const primaryLogin = await request(secureEnv, "POST", "/api/auth/login", { email: "admin@dcdcom.test", password: adminPassword });
+  assert(primaryLogin.status === 200, "provisioned administrator should be able to sign in");
+  let signedPrimaryHeaders = { cookie: primaryLogin.headers.get("set-cookie").split(";")[0] };
+  env.TEST_AUTH_COOKIE = signedPrimaryHeaders.cookie;
   const signedBootstrap = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: signedPrimaryHeaders });
   assert(signedBootstrap.status === 200 && signedBootstrap.body.accountId === "acct_dcdcom", "signed auth should resolve the token account");
-  const signedTenantHeaders = await authHeaders(secureEnv.AUTH_SESSION_SECRET, { email: "tenant@dcdcom.com", fullName: "Tenant User", accountId: "acct_second" });
+  const tenantLogin = await request(secureEnv, "POST", "/api/auth/login", { email: "tenant@dcdcom.test", password: tenantPassword, accountId: "acct_second" });
+  assert(tenantLogin.status === 200, "provisioned tenant user should be able to sign in");
+  const signedTenantHeaders = { cookie: tenantLogin.headers.get("set-cookie").split(";")[0] };
   const tenantBootstrap = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: signedTenantHeaders });
   assert(tenantBootstrap.status === 200 && tenantBootstrap.body.accountId === "acct_second", "signed auth should bootstrap a second tenant");
   assert(tenantBootstrap.body.inquiries.every((inquiry) => inquiry.id !== "inq_ntt_ashburn"), "second tenant should not reuse primary tenant seed ids");
   const crossTenantDetail = await request(secureEnv, "GET", "/api/inquiries/inq_ntt_ashburn", undefined, { headers: signedTenantHeaders });
   assert(crossTenantDetail.status === 404, "second tenant should not read primary tenant inquiries");
-  const login = await request(secureEnv, "POST", "/api/auth/login", { email: "alex@dcdcom.com", password: "Dcdcom2026!" });
+  const login = await request(secureEnv, "POST", "/api/auth/login", { email: "admin@dcdcom.test", password: adminPassword });
   assert(login.status === 200, "password login should return 200");
   assert(login.headers.get("x-request-id"), "auth responses should include request ids");
-  assert(login.body.user.email === "alex@dcdcom.com", "password login should return the signed-in user");
+  assert(login.body.user.email === "admin@dcdcom.test", "password login should return the signed-in user");
   assert(login.body.user.permissions.includes("inquiries:write"), "password login should include role permissions");
   const sessionCookie = login.headers.get("set-cookie");
   assert(sessionCookie?.includes("dcdcom_session="), "password login should issue a session cookie");
@@ -33,7 +54,7 @@ try {
   const session = await request(secureEnv, "GET", "/api/auth/session", undefined, { headers: { cookie: cookieHeader } });
   assert(session.status === 200 && session.body.authenticated === true, "session endpoint should read the signed session cookie");
   const protectedBootstrap = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: { cookie: cookieHeader } });
-  assert(protectedBootstrap.status === 200 && protectedBootstrap.body.user.email === "alex@dcdcom.com", "protected APIs should accept the signed session cookie");
+  assert(protectedBootstrap.status === 200 && protectedBootstrap.body.user.email === "admin@dcdcom.test", "protected APIs should accept the signed session cookie");
   const blockedCsrf = await request(secureEnv, "PATCH", "/api/profile", { fullName: "Cross Site" }, { headers: { cookie: cookieHeader, origin: "https://evil.example" } });
   assert(blockedCsrf.status === 403 && blockedCsrf.body.code === "csrf_origin_mismatch", "cookie-authenticated mutations should reject cross-site origins");
   const logout = await request(secureEnv, "POST", "/api/auth/logout", undefined, { headers: { cookie: cookieHeader } });
@@ -41,22 +62,24 @@ try {
   const revokedBootstrap = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: { cookie: cookieHeader } });
   assert(revokedBootstrap.status === 401, "logout should revoke the signed session");
   const lifecycleEnv = { ...secureEnv, EXPOSE_AUTH_LINKS: "true" };
-  const resetRequest = await request(lifecycleEnv, "POST", "/api/auth/forgot-password", { email: "alex@dcdcom.com" });
+  const resetRequest = await request(lifecycleEnv, "POST", "/api/auth/forgot-password", { email: "admin@dcdcom.test" });
   assert(resetRequest.status === 200 && resetRequest.body.resetUrl, "forgot password should create a usable reset link in local/test mode");
   const resetToken = new URL(resetRequest.body.resetUrl).searchParams.get("token");
-  const resetPassword = await request(lifecycleEnv, "POST", "/api/auth/reset-password", { token: resetToken, password: "DcdcomReset2026!" });
+  const resetPassword = await request(lifecycleEnv, "POST", "/api/auth/reset-password", { token: resetToken, password: "TestResetPassword2026!" });
   assert(resetPassword.status === 200 && resetPassword.headers.get("set-cookie")?.includes("dcdcom_session="), "password reset should update password and sign in");
   const resetCookie = resetPassword.headers.get("set-cookie").split(";")[0];
   const resetSession = await request(lifecycleEnv, "GET", "/api/auth/session", undefined, { headers: { cookie: resetCookie } });
-  assert(resetSession.status === 200 && resetSession.body.user.email === "alex@dcdcom.com", "password reset session should be readable");
+  assert(resetSession.status === 200 && resetSession.body.user.email === "admin@dcdcom.test", "password reset session should be readable");
   const sessionList = await request(lifecycleEnv, "GET", "/api/security/sessions", undefined, { headers: { cookie: resetCookie } });
   assert(sessionList.status === 200 && sessionList.body.sessions.length >= 1, "security sessions should list active user sessions");
-  const changedPassword = await request(lifecycleEnv, "POST", "/api/security/password", { currentPassword: "DcdcomReset2026!", newPassword: "DcdcomFinal2026!" }, { headers: { cookie: resetCookie } });
+  const changedPassword = await request(lifecycleEnv, "POST", "/api/security/password", { currentPassword: "TestResetPassword2026!", newPassword: "TestFinalPassword2026!" }, { headers: { cookie: resetCookie } });
   assert(changedPassword.status === 200, "change password should accept the current password");
   const revokedAfterPasswordChange = await request(lifecycleEnv, "GET", "/api/bootstrap", undefined, { headers: { cookie: resetCookie } });
   assert(revokedAfterPasswordChange.status === 401, "change password should revoke existing sessions");
-  const reloginAfterChange = await request(lifecycleEnv, "POST", "/api/auth/login", { email: "alex@dcdcom.com", password: "DcdcomFinal2026!" });
+  const reloginAfterChange = await request(lifecycleEnv, "POST", "/api/auth/login", { email: "admin@dcdcom.test", password: "TestFinalPassword2026!" });
   assert(reloginAfterChange.status === 200, "changed password should work for the next login");
+  signedPrimaryHeaders = { cookie: reloginAfterChange.headers.get("set-cookie").split(";")[0] };
+  env.TEST_AUTH_COOKIE = signedPrimaryHeaders.cookie;
   const invite = await request(lifecycleEnv, "POST", "/api/admin/invites", { email: "new.estimator@dcdcom.com", role: "estimator" }, { headers: signedPrimaryHeaders });
   assert(invite.status === 201 && invite.body.invite.inviteUrl, "admin should create a usable invite link in local/test mode");
   const inviteToken = new URL(invite.body.invite.inviteUrl).searchParams.get("token");
@@ -71,19 +94,8 @@ try {
   assert(deactivatedUser.status === 200 && deactivatedUser.body.user.id === invitedUser.id, "admin should deactivate users");
   const deactivatedLogin = await request(lifecycleEnv, "POST", "/api/auth/login", { email: "new.estimator@dcdcom.com", password: "Estimator2026!" });
   assert(deactivatedLogin.status === 403, "deactivated users should not be able to login");
-  const signup = await request(lifecycleEnv, "POST", "/api/auth/signup", { fullName: "Self Service User", email: "self.service@dcdcom.com", password: "SelfService2026!" });
-  assert(signup.status === 201 && signup.headers.get("set-cookie")?.includes("dcdcom_session="), "self-service signup should create a signed session");
-  assert(signup.body.user.email === "self.service@dcdcom.com" && signup.body.user.fullName === "Self Service User" && signup.body.user.permissions.includes("inquiries:write"), "self-service signup should return the personalized user name and email");
-  const signupCookie = signup.headers.get("set-cookie").split(";")[0];
-  const signupBootstrap = await request(lifecycleEnv, "GET", "/api/bootstrap", undefined, { headers: { cookie: signupCookie } });
-  assert(signupBootstrap.status === 200 && signupBootstrap.body.user.email === "self.service@dcdcom.com" && signupBootstrap.body.user.fullName === "Self Service User", "signed-up users should load their own personalized workspace");
-  const duplicateSignup = await request(lifecycleEnv, "POST", "/api/auth/signup", { fullName: "Duplicate", email: "self.service@dcdcom.com", password: "SelfService2026!" });
-  assert(duplicateSignup.status === 409, "self-service signup should reject duplicate emails");
-  const localModeSignup = await request(env, "POST", "/api/auth/signup", { fullName: "Local Created User", email: "local.created@dcdcom.com", password: "LocalCreated2026!" });
-  assert(localModeSignup.status === 201, "local-mode signup should create a signed session");
-  const localModeCookie = localModeSignup.headers.get("set-cookie").split(";")[0];
-  const localModeBootstrap = await request(env, "GET", "/api/bootstrap", undefined, { headers: { cookie: localModeCookie, "oai-authenticated-user-email": "alex@dcdcom.com" } });
-  assert(localModeBootstrap.status === 200 && localModeBootstrap.body.user.email === "local.created@dcdcom.com" && localModeBootstrap.body.user.fullName === "Local Created User", "local-mode bootstrap should prefer the signed-up user session over the default dev identity");
+  const signup = await request(lifecycleEnv, "POST", "/api/auth/signup", { fullName: "Self Service User", email: "self.service@dcdcom.test", password: "SelfService2026!" });
+  assert(signup.status === 403, "self-service signup must not create shared-workspace users");
   const googleLoginStart = await request({ ...lifecycleEnv, GOOGLE_LOGIN_CLIENT_ID: "login-client.apps.googleusercontent.com", GOOGLE_LOGIN_CLIENT_SECRET: "login-secret", GOOGLE_LOGIN_REDIRECT_URI: "http://127.0.0.1:4173/api/auth/google/callback" }, "GET", "/api/auth/google/start?redirectTo=/today");
   const googleLocation = googleLoginStart.headers.get("location") || "";
   assert(googleLoginStart.status === 302 && googleLocation.startsWith("https://accounts.google.com/"), "Google login start should redirect to Google");
@@ -93,8 +105,16 @@ try {
   const googleFetchBefore = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ id_token: unsignedJwt({ sub: "google-sub-new-user", email: "google.new@dcdcom.com", email_verified: true, name: "Google New", picture: "https://example.com/avatar.png" }) }), { status: 200, headers: { "content-type": "application/json" } });
   try {
-    const googleCallback = await request({ ...lifecycleEnv, GOOGLE_LOGIN_CLIENT_ID: "login-client.apps.googleusercontent.com", GOOGLE_LOGIN_CLIENT_SECRET: "login-secret", GOOGLE_LOGIN_REDIRECT_URI: "http://127.0.0.1:4173/api/auth/google/callback" }, "GET", `/api/auth/google/callback?state=${encodeURIComponent(googleParams.get("state"))}&code=google-code`);
-    assert(googleCallback.status === 302 && googleCallback.headers.get("set-cookie")?.includes("dcdcom_session="), "Google callback should create a signed session");
+    const rejectedGoogleCallback = await request({ ...lifecycleEnv, GOOGLE_LOGIN_CLIENT_ID: "login-client.apps.googleusercontent.com", GOOGLE_LOGIN_CLIENT_SECRET: "login-secret", GOOGLE_LOGIN_REDIRECT_URI: "http://127.0.0.1:4173/api/auth/google/callback" }, "GET", `/api/auth/google/callback?state=${encodeURIComponent(googleParams.get("state"))}&code=google-code`);
+    assert(rejectedGoogleCallback.status === 302 && !rejectedGoogleCallback.headers.get("set-cookie") && decodeURIComponent(new URL(rejectedGoogleCallback.headers.get("location"), "http://local.test").searchParams.get("message")).includes("invitation"), "uninvited Google accounts must not be provisioned");
+    const googleInvite = await request(lifecycleEnv, "POST", "/api/admin/invites", { email: "google.new@dcdcom.com", role: "estimator" }, { headers: signedPrimaryHeaders });
+    const googleInviteToken = new URL(googleInvite.body.invite.inviteUrl).searchParams.get("token");
+    const acceptedGoogleInvite = await request(lifecycleEnv, "POST", "/api/auth/accept-invite", { token: googleInviteToken, fullName: "Google New" });
+    assert(acceptedGoogleInvite.status === 200, "an administrator-issued invite should establish Google user access");
+    const invitedGoogleStart = await request({ ...lifecycleEnv, GOOGLE_LOGIN_CLIENT_ID: "login-client.apps.googleusercontent.com", GOOGLE_LOGIN_CLIENT_SECRET: "login-secret", GOOGLE_LOGIN_REDIRECT_URI: "http://127.0.0.1:4173/api/auth/google/callback" }, "GET", "/api/auth/google/start?redirectTo=/today");
+    const invitedGoogleState = new URL(invitedGoogleStart.headers.get("location")).searchParams.get("state");
+    const googleCallback = await request({ ...lifecycleEnv, GOOGLE_LOGIN_CLIENT_ID: "login-client.apps.googleusercontent.com", GOOGLE_LOGIN_CLIENT_SECRET: "login-secret", GOOGLE_LOGIN_REDIRECT_URI: "http://127.0.0.1:4173/api/auth/google/callback" }, "GET", `/api/auth/google/callback?state=${encodeURIComponent(invitedGoogleState)}&code=google-code`);
+    assert(googleCallback.status === 302 && googleCallback.headers.get("set-cookie")?.includes("dcdcom_session="), "invited Google accounts should create a signed session");
     const googleCookie = googleCallback.headers.get("set-cookie").split(";")[0];
     const googleBootstrap = await request(lifecycleEnv, "GET", "/api/bootstrap", undefined, { headers: { cookie: googleCookie } });
     assert(googleBootstrap.status === 200 && googleBootstrap.body.user.email === "google.new@dcdcom.com" && googleBootstrap.body.user.fullName === "Google New", "new Google accounts should be provisioned with their Google name and email");
@@ -152,12 +172,15 @@ try {
   assert(bootAfterRecent.body.personalization.recentItems.some((item) => item.entity_type === "inquiry" && item.entity_id === seedInquiryId), "viewing inquiry detail should update recent work");
   const assignedList = await request(env, "GET", "/api/inquiries?limit=1&offset=0");
   assert(assignedList.body.inquiries.some((inquiry) => inquiry.id === seedInquiryId && inquiry.owner_name === boot.body.user.fullName), "inquiry list should include owner metadata");
-  const watcherHeaders = await authHeaders(secureEnv.AUTH_SESSION_SECRET, { email: "casey.ops@dcdcom.com", fullName: "Casey Operations", accountId: "acct_dcdcom" });
+  const watcherPassword = `test-${crypto.randomUUID()}-A1!`;
+  await provisionUser(env, { id: "user_test_watcher", accountId: "acct_dcdcom", email: "casey.ops@dcdcom.test", fullName: "Casey Operations", role: "estimator", password: watcherPassword });
+  const watcherLogin = await request(secureEnv, "POST", "/api/auth/login", { email: "casey.ops@dcdcom.test", password: watcherPassword });
+  const watcherHeaders = { cookie: watcherLogin.headers.get("set-cookie").split(";")[0] };
   const watcherBootstrap = await request(secureEnv, "GET", "/api/bootstrap", undefined, { headers: watcherHeaders });
-  assert(watcherBootstrap.status === 200 && watcherBootstrap.body.user.email === "casey.ops@dcdcom.com", "signed users in the account should be bootstrapped");
+  assert(watcherBootstrap.status === 200 && watcherBootstrap.body.user.email === "casey.ops@dcdcom.test", "signed users in the account should be bootstrapped");
   const watchedSeed = await request(secureEnv, "POST", `/api/inquiries/${seedInquiryId}/watchers`, undefined, { headers: watcherHeaders });
   assert(watchedSeed.status === 201 && watchedSeed.body.isWatching === true, "watch endpoint should subscribe the signed-in user");
-  assert(watchedSeed.body.watchers.some((watcher) => watcher.email === "casey.ops@dcdcom.com"), "watch endpoint should return watcher identity metadata");
+  assert(watchedSeed.body.watchers.some((watcher) => watcher.email === "casey.ops@dcdcom.test"), "watch endpoint should return watcher identity metadata");
   const watcherDetail = await request(secureEnv, "GET", `/api/inquiries/${seedInquiryId}`, undefined, { headers: watcherHeaders });
   assert(watcherDetail.body.is_watching === true && watcherDetail.body.watcher_count >= 2, "detail should reflect watcher subscriptions for the signed-in user");
   const unwatchedSeed = await request(secureEnv, "DELETE", `/api/inquiries/${seedInquiryId}/watchers/me`, undefined, { headers: watcherHeaders });
@@ -207,7 +230,7 @@ try {
 
   const structuredInquiryEmail = `From: Marcus Bennett <marcus.bennett@northstarcompute.example>
 
-Hello DCDecom,
+Hello DC Decom,
 
 NorthStar Compute Services, a regional managed hosting and private-cloud provider, is requesting a formal proposal for the decommissioning of our ORD-2 data center suite.
 
@@ -512,9 +535,9 @@ NorthStar Compute Services`;
   });
   assert(internalNote.status === 201 && internalNote.body.communication.channel === "internal_note", "internal notes should be saved as logged communications");
   const comment = await request(env, "POST", `/api/inquiries/${saved.body.id}/comments`, {
-    body: "Please review access assumptions with @casey.ops@dcdcom.com before proposal release."
+    body: "Please review access assumptions with @casey.ops@dcdcom.test before proposal release."
   });
-  assert(comment.status === 201 && comment.body.comment.mentions.some((mention) => mention.email === "casey.ops@dcdcom.com"), "comments should resolve teammate mentions");
+  assert(comment.status === 201 && comment.body.comment.mentions.some((mention) => mention.email === "casey.ops@dcdcom.test"), "comments should resolve teammate mentions");
   const comments = await request(env, "GET", `/api/inquiries/${saved.body.id}/comments`);
   assert(comments.status === 200 && comments.body.comments.some((entry) => entry.id === comment.body.comment.id), "comments listing should include posted comments");
   const detailAfterComment = await request(env, "GET", `/api/inquiries/${saved.body.id}`);
@@ -801,7 +824,8 @@ async function request(env, method, path, payload, options = {}) {
 }
 
 async function rawRequest(env, method, path, payload, options = {}) {
-  const init = { method, headers: new Headers({ "oai-authenticated-user-email": "alex@dcdcom.com" }) };
+  const init = { method, headers: new Headers() };
+  if (env.TEST_AUTH_COOKIE) init.headers.set("cookie", env.TEST_AUTH_COOKIE);
   for (const [key, value] of Object.entries(options.headers || {})) init.headers.set(key, value);
   if (payload instanceof FormData) {
     init.body = payload;
@@ -816,23 +840,26 @@ async function publicRawRequest(env, method, path) {
   return app.fetch(new Request(`http://local.test${path}`, { method }), env);
 }
 
-async function authHeaders(secret, payload) {
-  const body = base64UrlEncode(JSON.stringify({ sub: `user_${payload.email.replace(/[^a-z0-9]+/g, "_")}`, email: payload.email, fullName: payload.fullName, accountId: payload.accountId, exp: Math.floor(Date.now() / 1000) + 3600 }));
-  const signature = await hmac(secret, body);
-  return { authorization: `Bearer ${body}.${signature}` };
-}
-
-async function hmac(secret, value) {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(value));
-  return base64UrlEncode(new Uint8Array(signature));
-}
-
 function base64UrlEncode(value) {
   const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function provisionUser(env, { id, accountId, email, fullName, role, password }) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const passwordHash = `pbkdf2_sha256$50000$${base64UrlEncode(salt)}$${base64UrlEncode(await pbkdf2(password, salt, 50_000))}`;
+  await env.DB.prepare("INSERT INTO accounts (id, name) VALUES (?, ?) ON CONFLICT(id) DO NOTHING").bind(accountId, `Test ${accountId}`).run();
+  await env.DB.prepare("INSERT INTO users (id, account_id, email, full_name, role) VALUES (?, ?, ?, ?, ?)").bind(id, accountId, email, fullName, role).run();
+  await env.DB.prepare("INSERT INTO user_preferences (user_id) VALUES (?)").bind(id).run();
+  await env.DB.prepare("INSERT INTO password_credentials (user_id, password_hash, password_algorithm) VALUES (?, ?, ?)").bind(id, passwordHash, "pbkdf2_sha256").run();
+}
+
+async function pbkdf2(password, salt, iterations) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256);
+  return new Uint8Array(bits);
 }
 
 function unsignedJwt(payload) {
