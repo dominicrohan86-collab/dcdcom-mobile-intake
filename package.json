@@ -48,6 +48,6 @@
     "esbuild": "^0.28.1",
     "tailwindcss": "^4.3.2",
     "vite": "^8.0.16",
-    "wrangler": "^4.109.0"
+    "wrangler": "^4.110.0"
   }
 }
