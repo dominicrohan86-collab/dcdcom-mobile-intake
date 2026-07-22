@@ -48,7 +48,7 @@ export function NotificationBell({ openNotification }) {
         </div>
       </div>
       {query.isLoading ? <div className="grid gap-2 p-3">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-lg bg-muted" />)}</div>
-        : query.error ? <div className="p-3"><EmptyState>Notifications are unavailable.</EmptyState></div>
+        : query.error ? <div className="p-3"><EmptyState>Could not load notifications.</EmptyState></div>
         : notifications.length ? <div className="max-h-[calc(min(520px,100dvh-96px)-62px)] overflow-y-auto sm:max-h-[470px]">
           {notifications.map((notification) => <NotificationRow key={notification.id} notification={notification} open={() => openItem(notification)} dismiss={() => dismiss.mutate(notification.id)} busy={dismiss.isPending && dismiss.variables === notification.id} />)}
         </div>

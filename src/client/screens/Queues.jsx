@@ -1,7 +1,7 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
-import { AlertTriangle, Check, ChevronRight, ListFilter, MapPin, Search, UserRound, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, ListFilter, MapPin, Search, UserRound } from "lucide-react";
 import { client } from "../lib/api";
 import { Badge, Button, EmptyState, Input } from "../components/ui";
 import { adaptInquiry, cn, priorityTones, stageLabels, stageTones } from "../lib/utils";
@@ -99,7 +99,6 @@ export function PipelineScreen({ inquiries, open, setNotice }) {
         </PopoverPrimitive.Portal>
       </PopoverPrimitive.Root>
     </div>
-    {stage !== "all" && <div className="mt-3 flex items-center gap-2"><span className="text-xs font-medium text-muted-foreground">Filtered by</span><button type="button" onClick={() => setStage("all")} className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-brand-muted px-3 text-xs font-semibold text-brand-muted-foreground hover:brightness-95">{stageLabels[stage]} <X size={14} aria-hidden="true" /><span className="sr-only">Clear stage filter</span></button></div>}
     <div className="mt-3 md:hidden">{query.isLoading ? <LoadingRows /> : rows.length ? <div className="grid gap-2">{rows.map((item) => <InquiryMobileCard key={item.id} row={item} open={open} />)}</div> : <EmptyState>No matching inquiries.</EmptyState>}</div>
     <div className="mt-4 hidden md:block">
       {query.isLoading ? <LoadingRows desktop /> : rows.length ? <section className="rounded-xl border border-border bg-card/50 p-2 shadow-sm">

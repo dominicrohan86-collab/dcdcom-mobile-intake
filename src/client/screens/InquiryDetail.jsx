@@ -1,7 +1,7 @@
 import React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
-import { AlertTriangle, Bell, BellOff, CalendarDays, Check, ExternalLink, Eye, FileImage, FileText, Mail, MapPin, MessageSquare, Paperclip, Phone, Sparkles, Trash2, Upload, UserRound, X } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, CalendarDays, Check, ExternalLink, Eye, FileImage, FileText, Mail, MapPin, MessageCircle, MessageSquare, Paperclip, Phone, Sparkles, Trash2, Upload, UserRound, X } from "lucide-react";
 import { client } from "../lib/api";
 import { AccordionSection, Badge, Button, Dialog, EmptyState, Field, Input, Select, Textarea } from "../components/ui";
 import { adaptInquiry, cn, communicationTones, requirementTones, stageLabels, stageTones } from "../lib/utils";
@@ -17,6 +17,7 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [uploadPreset, setUploadPreset] = React.useState("other");
   const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [ownerOpen, setOwnerOpen] = React.useState(false);
   const [fileToDelete, setFileToDelete] = React.useState(null);
   const [noteOpen, setNoteOpen] = React.useState(false);
   const [watchersOpen, setWatchersOpen] = React.useState(false);
@@ -33,6 +34,7 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
   const fullAddress = navigableAddress(item, fields);
   const mapsUrl = fullAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}` : "";
   const canDeleteInquiry = Boolean(item.owner_user_id && user?.id && String(item.owner_user_id) === String(user.id));
+  const canAssignOwner = ["admin", "project_manager"].includes(user?.role);
 
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["inquiry", item.id] }),
@@ -54,6 +56,10 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
       setNotice(state.isWatching ? "You will be notified about this inquiry." : "You stopped watching this inquiry.");
       await refresh();
     }
+  });
+  const ownerMutation = useMutation({
+    mutationFn: (ownerUserId) => client.updateOwner(item.id, ownerUserId, item.updated_at),
+    onSuccess: async () => { setOwnerOpen(false); setNotice("Inquiry owner updated."); await refresh(); }
   });
   const uploadMutation = useMutation({
     mutationFn: (queuedFiles) => Promise.all(queuedFiles.map(({ file, category }) => client.upload(item.id, file, category))),
@@ -80,7 +86,7 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
     setUploadOpen(true);
   }
 
-  const pageError = requirementMutation.error || uploadMutation.error || fileDeleteMutation.error || detailsMutation.error || noteMutation.error || commentMutation.error || watchMutation.error || deleteMutation.error;
+  const pageError = requirementMutation.error || ownerMutation.error || uploadMutation.error || fileDeleteMutation.error || detailsMutation.error || noteMutation.error || commentMutation.error || watchMutation.error || deleteMutation.error;
   const pageErrorMessage = pageError?.message ? String(pageError.message) : "";
   React.useEffect(() => {
     if (pageErrorMessage) setNotice?.({ tone: "error", message: pageErrorMessage });
@@ -116,12 +122,14 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
           <div className="flex min-w-0 items-center gap-2">
             <UserRound size={14} className="shrink-0" />
             <span className="min-w-0 truncate"><span className="font-semibold text-white">{item.owner_name || "Unassigned"}</span>{item.owner_email ? ` · ${item.owner_email}` : ""}</span>
+            {canAssignOwner && <button type="button" onClick={() => setOwnerOpen(true)} className="shrink-0 rounded-md border border-white/15 px-2 py-1 text-[11px] font-bold text-white/75 hover:bg-white/10">Assign</button>}
           </div>
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2" aria-label="Primary inquiry actions">
+      <div className="mt-3 grid grid-cols-4 gap-2" aria-label="Primary inquiry actions">
         <QuickAction icon={Upload} label="Add docs" onClick={() => openUpload("other")} accent surface="dark" />
+        <QuickAction icon={MessageCircle} label="Ask" onClick={() => navigate("assistant", { inquiry: true })} surface="dark" />
         <QuickAction icon={Mail} label="Follow up" onClick={() => navigate("email")} surface="dark" />
         <QuickAction icon={FileText} label="Generate" onClick={() => navigate("proposal")} surface="dark" />
       </div>
@@ -165,6 +173,9 @@ export function InquiryDetailScreen({ detail, user, navigate, openDocument: open
     <Dialog open={watchersOpen} onOpenChange={setWatchersOpen} title="Watchers" description={`${Number(detail.watcher_count ?? detail.watchers?.length ?? 0)} ${Number(detail.watcher_count ?? detail.watchers?.length ?? 0) === 1 ? "person is" : "people are"} watching this inquiry.`}>
       <WatchersDialog detail={detail} busy={watchMutation.isPending} toggleWatch={() => watchMutation.mutate()} />
     </Dialog>
+    <Dialog open={ownerOpen} onOpenChange={setOwnerOpen} title="Assign inquiry owner">
+      <OwnerPanel item={item} user={user} busy={ownerMutation.isPending} assign={(ownerUserId) => ownerMutation.mutate(ownerUserId)} />
+    </Dialog>
     <Dialog open={noteOpen} onOpenChange={setNoteOpen} title="Add internal note"><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); noteMutation.mutate(); }}><Field label="Note"><Input value={noteBody} onChange={(event) => setNoteBody(event.target.value)} placeholder="Customer prefers early access window" /></Field><Button type="submit" disabled={noteMutation.isPending || !noteBody.trim()}>{noteMutation.isPending ? "Saving..." : "Save note"}</Button></form></Dialog>
     <Dialog open={uploadOpen} onOpenChange={setUploadOpen} title="Upload source documents" description="Add the files AI should reference before drafting estimates, scopes, proposals, or checklists."><UploadFiles busy={uploadMutation.isPending} initialCategory={uploadPreset} notify={setNotice} submit={(queuedFiles) => uploadMutation.mutate(queuedFiles)} /></Dialog>
     <Dialog open={Boolean(fileToDelete)} onOpenChange={(open) => !open && setFileToDelete(null)} title="Delete file?" description="This file will be permanently removed from this inquiry and storage.">
@@ -193,6 +204,21 @@ function WatchersButton({ detail, open, surface = "light" }) {
     <Eye size={20} />
     <span className={cn("absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full border bg-brand px-1 text-[11px] font-black leading-5 text-brand-foreground", dark ? "border-[#102411]" : "border-card")}>{count}</span>
   </button>;
+}
+
+function OwnerPanel({ item, user, busy, assign }) {
+  const isCurrentOwner = item.owner_user_id && user?.id && String(item.owner_user_id) === String(user.id);
+  return <div className="grid gap-3">
+    <div className="rounded-md border border-border bg-card p-3">
+      <p className="text-xs font-bold uppercase text-muted-foreground">Current owner</p>
+      <p className="mt-1 text-sm font-semibold text-foreground">{item.owner_name || "Unassigned"}</p>
+      {item.owner_email && <p className="mt-0.5 text-xs text-muted-foreground">{item.owner_email}</p>}
+    </div>
+    <div className="grid grid-cols-2 gap-2">
+      <Button disabled={busy || isCurrentOwner || !user?.id} onClick={() => assign(user.id)}><UserRound size={16} />Assign to me</Button>
+      <Button variant="outline" disabled={busy || !item.owner_user_id} onClick={() => assign(null)}>Unassign</Button>
+    </div>
+  </div>;
 }
 
 function WatchersDialog({ detail, busy, toggleWatch }) {
@@ -251,7 +277,7 @@ function WorkflowGuidance({ item, missing, files, documents, communications, nav
     ["Floor plan", hasEvidence(sourceFiles, "floor_plan")],
     ["Equipment list", hasEvidence(sourceFiles, "equipment_list")],
     ["Contract", hasEvidence(sourceFiles, "contract")],
-    ["Attachment", hasEvidence(sourceFiles, "email_attachment")]
+    ["Email attachment", hasEvidence(sourceFiles, "email_attachment")]
   ];
   const openMissing = missing.filter((entry) => ["open", "requested"].includes(entry.status));
   const hasOutbound = communications.some((communication) => communication.direction === "outbound");
@@ -285,7 +311,7 @@ function WorkflowGuidance({ item, missing, files, documents, communications, nav
           <p className="hidden min-w-0 flex-1 truncate text-sm text-muted-foreground md:block">{action.detail}</p>
         </div>
       </div>
-      <Button size="sm" variant="outline" onClick={runAction} className="w-full sm:w-auto">{action.buttonLabel}</Button>
+      {action.target !== "docs" && <Button size="sm" variant="outline" onClick={runAction} className="w-full sm:w-auto">{action.buttonLabel}</Button>}
     </div>
   </section>;
 }
@@ -368,7 +394,7 @@ function FileEvidenceTile({ file, deleteFile, deleting }) {
       <span className="block min-w-0 px-2.5 py-2">
         <span className="block truncate text-xs font-bold text-foreground">{file.file_name || "Uploaded file"}</span>
         <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{image ? "Image" : label} - {category}</span>
-        {file.content_hash && <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/70">SHA {shortHash(file.content_hash)}</span>}
+        {file.content_hash && <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/70">SHA-256 {shortHash(file.content_hash)}</span>}
       </span>
     </a>
     <DeleteFileButton file={file} deleteFile={deleteFile} disabled={deleting} className="absolute right-1.5 top-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />

@@ -1,15 +1,23 @@
 import React from "react";
-import { BriefcaseBusiness, CircleHelp, FileText, Home, LogOut, MonitorSmartphone, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Settings, ShieldCheck, Sun } from "lucide-react";
+import { BriefcaseBusiness, CircleHelp, FileText, Home, LogOut, MessageCircle, MonitorSmartphone, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Settings, ShieldCheck, Sun } from "lucide-react";
 import { Button } from "./ui";
 import { NotificationBell } from "./NotificationBell";
 import { useTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
 
-const navItems = [
+const desktopNavItems = [
+  ["today", Home, "Today"],
+  ["pipeline", BriefcaseBusiness, "Inquiries"],
+  ["assistant", MessageCircle, "Assistant"],
+  ["docs", FileText, "Docs"],
+  ["more", MoreHorizontal, "More"]
+];
+
+const mobileNavItems = [
   ["today", Home, "Today"],
   ["pipeline", BriefcaseBusiness, "Inquiries"],
   ["add", Plus, "Add"],
-  ["docs", FileText, "Docs"],
+  ["assistant", MessageCircle, "Assistant"],
   ["more", MoreHorizontal, "More"]
 ];
 
@@ -32,7 +40,7 @@ export function Shell({ screen, navigate, children, title, back, user, openNotif
       <div className="my-3 border-t border-border" aria-hidden="true" />
 
       <nav className="grid gap-1">
-        {navItems.filter(([target]) => target !== "add").map(([target, Icon, label]) => {
+        {desktopNavItems.map(([target, Icon, label]) => {
           const active = screen === target;
           return <button key={target} onClick={() => navigate(target)} aria-current={active ? "page" : undefined} aria-label={label} title={navCollapsed ? label : undefined} className={cn("group relative flex min-h-11 items-center rounded-xl text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/70", navCollapsed ? "justify-center px-0" : "gap-3 px-3", active ? "bg-brand-muted text-brand-muted-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
             {active && <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-brand" aria-hidden="true" />}
@@ -91,11 +99,11 @@ export function Shell({ screen, navigate, children, title, back, user, openNotif
           </>}
         </div>
       </header>
-      <div key={screen} className="flex-1 overflow-y-auto px-4 pb-24 pt-5 lg:px-8 lg:pb-10">
-        <div className="animate-fade-up">{children}</div>
+      <div key={screen} className={cn("flex-1 overflow-y-auto px-4 pb-24 pt-5 lg:px-8 lg:pb-10", screen === "assistant" && "overflow-hidden p-0 pb-[76px] lg:p-0")}>
+        <div className={cn("animate-fade-up", screen === "assistant" && "h-full")}>{children}</div>
       </div>
       <nav className="absolute inset-x-0 bottom-0 z-30 grid h-[76px] grid-cols-5 border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
-        {navItems.map(([target, Icon, label]) => {
+        {mobileNavItems.map(([target, Icon, label]) => {
           const active = screen === target;
           if (target === "add") return <button key={target} onClick={() => navigate(target)} aria-label="Add inquiry" className="mx-auto -mt-4 grid size-14 place-items-center self-center rounded-2xl bg-brand text-brand-foreground shadow-lg shadow-brand/30 outline-none ring-4 ring-card focus-visible:ring-ring/70"><Icon size={24} /></button>;
           return <button key={target} onClick={() => navigate(target)} aria-label={label} aria-current={active ? "page" : undefined} className={cn("grid place-items-center content-center gap-1 rounded-xl text-[11px] font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/70", active ? "text-brand" : "text-muted-foreground")}><Icon size={20} />{label}</button>;

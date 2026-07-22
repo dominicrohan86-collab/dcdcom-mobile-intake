@@ -90,9 +90,12 @@ export function DocsScreen({ inquiries, selectedId, selectInquiry, detail, navig
   if (selected) return <DocumentViewer asset={selected} inquiry={inquiry} navigate={navigate} back={backToDocs} notify={notify} />;
 
   return <>
-    <header>
-      <h2 className="text-3xl font-bold">Docs</h2>
-      <label className="mt-3 grid gap-1 text-xs font-semibold text-muted-foreground">Inquiry<Select label="Choose inquiry for documents" value={selectedId} onValueChange={(id) => { selectInquiry(id); setSelected(null); }} options={inquiryOptions} /></label>
+    <header className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h2 className="text-3xl font-bold">Docs</h2>
+        <label className="mt-3 grid gap-1 text-xs font-semibold text-muted-foreground">Inquiry<Select label="Choose inquiry for documents" value={selectedId} onValueChange={(id) => { selectInquiry(id); setSelected(null); }} options={inquiryOptions} /></label>
+      </div>
+      <Button type="button" variant="outline" size="sm" className="mt-1 shrink-0" onClick={() => navigate("assistant", { inquiry: true })}><Bot size={15} />Ask</Button>
     </header>
 
     <div className="mt-5 grid grid-cols-[minmax(0,1fr)_44px] gap-2">
@@ -198,7 +201,7 @@ function DocumentViewer({ asset, inquiry, navigate, back, notify }) {
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
         {file ? <a href={downloadUrl} download={file.file_name || asset.title} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-brand px-3 text-sm font-semibold text-brand-foreground"><Download size={16} />Download</a> : <Button onClick={download}><Download size={16} />Download</Button>}
-        <Button variant="outline" onClick={() => navigate("detail")}><ExternalLink size={16} />Inquiry</Button>
+        <Button variant="outline" onClick={() => navigate("assistant", { inquiry: true })}><Bot size={16} />Ask</Button>
         <Button variant="outline" onClick={share} disabled={shareMutation.isPending}><Share2 size={16} />{shareMutation.isPending ? "Signing..." : "Share"}</Button>
       </div>
     </div>
@@ -369,7 +372,7 @@ function versionComparison(current, previous) {
 function wordCount(value) { return String(value || "").trim().split(/\s+/).filter(Boolean).length; }
 function paragraphs(value) { return String(value || "").split(/\n{2,}|\n/).map((part) => part.trim()).filter(Boolean); }
 
-export function MoreScreen({ user, preferences, personalization, integrations, selectedId, setNotice }) {
+export function MoreScreen({ user, preferences, personalization, integrations, selectedId, setNotice, navigate }) {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = React.useState(null);
   const settings = parseSettings(preferences?.settings_json);
@@ -393,6 +396,7 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
   const providerQueue = useQuery({ queryKey: ["admin", "provider-queue"], queryFn: () => client.providerQueue({ limit: 8 }), enabled: dialog === "health" });
   const retention = useQuery({ queryKey: ["admin", "file-retention"], queryFn: client.fileRetention, enabled: dialog === "retention" });
   const aiPrompts = useQuery({ queryKey: ["admin", "ai-prompts"], queryFn: client.aiPrompts, enabled: dialog === "ai-prompts" });
+  const aiUsage = useQuery({ queryKey: ["admin", "ai-usage"], queryFn: client.aiUsage, enabled: dialog === "ai-prompts" });
   const profile = useMutation({ mutationFn: () => client.saveProfile({ fullName: name }), onSuccess: () => { setNotice("Profile saved."); setDialog(null); queryClient.invalidateQueries({ queryKey: ["bootstrap"] }); } });
   const saveRules = useMutation({ mutationFn: () => client.saveSettings(rules), onSuccess: () => { setNotice("Preferences saved."); setDialog(null); queryClient.invalidateQueries({ queryKey: ["bootstrap"] }); } });
   const changePassword = useMutation({ mutationFn: () => client.changePassword(passwords), onSuccess: () => { setNotice("Password changed. Sign in again on this device."); window.location.assign("/login"); } });
@@ -431,7 +435,8 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
     readiness.error,
     providerQueue.error,
     retention.error,
-    aiPrompts.error
+    aiPrompts.error,
+    aiUsage.error
   ].find(Boolean)?.message;
   React.useEffect(() => {
     if (moreErrorMessage) setNotice?.({ tone: "error", message: String(moreErrorMessage) });
@@ -463,7 +468,7 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
         }) : <p className="px-3 py-4 text-sm text-muted-foreground">Open an inquiry to build your recent workspace.</p>}
       </div>
     </section>
-    <div className="mt-4 divide-y divide-border border-y border-border"><Menu icon={UserRound} label="Account" action={() => setDialog("account")} /><Menu icon={ShieldCheck} label="Security" action={() => setDialog("security")} /><Menu icon={SlidersHorizontal} label="Saved views" action={() => setDialog("views")} />{user?.role && ["admin", "project_manager"].includes(user.role) && <Menu icon={KeyRound} label="Admin users" action={() => setDialog("admin")} />}{user?.role === "admin" && <Menu icon={Activity} label="Audit history" action={() => setDialog("audit")} />}{user?.role === "admin" && <Menu icon={Archive} label="File retention" action={() => setDialog("retention")} />}{user?.role === "admin" && <Menu icon={Bot} label="AI prompt registry" action={() => setDialog("ai-prompts")} />}{user?.role === "admin" && <Menu icon={ServerCog} label="System health" action={() => setDialog("health")} />}<Menu icon={Bell} label="Preferences" action={() => setDialog("notifications")} /><Menu icon={Link2} label="Integrations" action={() => setDialog("integrations")} /><Menu icon={CircleHelp} label="Help" action={() => setDialog("help")} /><Menu icon={RefreshCw} label="Sync selected inquiry" action={() => sync.mutate()} /></div>
+    <div className="mt-4 divide-y divide-border border-y border-border"><Menu icon={FileText} label="Docs & files" action={() => navigate?.("docs")} /><Menu icon={UserRound} label="Account" action={() => setDialog("account")} /><Menu icon={ShieldCheck} label="Security" action={() => setDialog("security")} /><Menu icon={SlidersHorizontal} label="Saved views" action={() => setDialog("views")} />{user?.role && ["admin", "project_manager"].includes(user.role) && <Menu icon={KeyRound} label="Admin users" action={() => setDialog("admin")} />}{user?.role === "admin" && <Menu icon={Activity} label="Audit history" action={() => setDialog("audit")} />}{user?.role === "admin" && <Menu icon={Archive} label="File retention" action={() => setDialog("retention")} />}{user?.role === "admin" && <Menu icon={Bot} label="AI prompt registry" action={() => setDialog("ai-prompts")} />}{user?.role === "admin" && <Menu icon={ServerCog} label="System health" action={() => setDialog("health")} />}<Menu icon={Bell} label="Preferences" action={() => setDialog("notifications")} /><Menu icon={Link2} label="Integrations" action={() => setDialog("integrations")} /><Menu icon={CircleHelp} label="Help" action={() => setDialog("help")} /><Menu icon={RefreshCw} label="Sync selected inquiry" action={() => sync.mutate()} /></div>
     <Dialog open={dialog === "account"} onOpenChange={(open) => !open && setDialog(null)} title="Account"><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); profile.mutate(); }}><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Email"><Input value={user?.email || ""} readOnly /></Field><Button type="submit">Save profile</Button></form></Dialog>
     <Dialog open={dialog === "security"} onOpenChange={(open) => !open && setDialog(null)} title="Security"><div className="grid gap-4">
       <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); changePassword.mutate(); }}>
@@ -489,7 +494,7 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
       <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); saveView.mutate(); }}>
         <b className="text-sm">Create saved view</b>
         <Field label="Name"><Input value={viewDraft.name} onChange={(event) => setViewDraft({ ...viewDraft, name: event.target.value })} placeholder="Operations review" /></Field>
-        <Field label="Screen"><Select value={viewDraft.screen} onValueChange={(screen) => setViewDraft({ ...viewDraft, screen })} options={[["today", "Today"], ["inquiries", "Inquiries"], ["docs", "Docs"], ["composers", "Composers"], ["admin", "Admin"]]} /></Field>
+        <Field label="Screen"><Select value={viewDraft.screen} onValueChange={(screen) => setViewDraft({ ...viewDraft, screen })} options={[["today", "Today"], ["inquiries", "Inquiries"], ["docs", "Docs"], ["composers", "Composers"], ["assistant", "Assistant"], ["admin", "Admin"]]} /></Field>
         <Checkbox label="Use as default view" checked={viewDraft.isDefault} onCheckedChange={(value) => setViewDraft({ ...viewDraft, isDefault: Boolean(value) })} />
         <Button type="submit" disabled={saveView.isPending || !viewDraft.name.trim()}>Save view</Button>
       </form>
@@ -512,13 +517,14 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
       <Checkbox label="Legal hold" checked={retentionDraft.legalHold} onCheckedChange={(value) => setRetentionDraft({ ...retentionDraft, legalHold: Boolean(value) })} />
       <div className="grid grid-cols-2 gap-2"><Button variant="outline" disabled={previewRetention.isPending || retention.isLoading} onClick={() => previewRetention.mutate()}>{previewRetention.isPending ? "Checking..." : "Preview cleanup"}</Button><Button disabled={saveRetention.isPending} onClick={() => saveRetention.mutate()}>{saveRetention.isPending ? "Saving..." : "Save policy"}</Button></div>
       {retention.data?.policy?.updated_at && <p className="text-xs text-muted-foreground">Last updated {formatDate(retention.data.policy.updated_at)}</p>}
-      {previewRetention.data && <section className="grid gap-2"><div className="flex items-center justify-between gap-3"><b className="text-sm">Cleanup preview</b><Badge tone={previewRetention.data.legalHold ? "amber" : previewRetention.data.candidateCount ? "red" : "green"}>{previewRetention.data.legalHold ? "Held" : `${previewRetention.data.candidateCount} files`}</Badge></div>{previewRetention.data.candidates?.length ? previewRetention.data.candidates.map((file) => <Card key={file.id} className="p-3"><b className="block truncate text-sm">{file.file_name}</b><p className="mt-1 truncate text-xs text-muted-foreground">{[file.company_name, file.inquiry_title, formatDate(file.uploaded_at)].filter(Boolean).join(" · ")}</p></Card>) : <p className="text-sm text-muted-foreground">{previewRetention.data.legalHold ? "Legal hold is active." : "No files are past retention."}</p>}</section>}
+      {previewRetention.data && <section className="grid gap-2"><div className="flex items-center justify-between gap-3"><b className="text-sm">Cleanup preview</b><Badge tone={previewRetention.data.legalHold ? "amber" : (previewRetention.data.candidateCount || previewRetention.data.chatCandidateCount) ? "red" : "green"}>{previewRetention.data.legalHold ? "Held" : `${Number(previewRetention.data.candidateCount || 0) + Number(previewRetention.data.chatCandidateCount || 0)} files`}</Badge></div>{previewRetention.data.candidates?.length ? previewRetention.data.candidates.map((file) => <Card key={file.id} className="p-3"><b className="block truncate text-sm">{file.file_name}</b><p className="mt-1 truncate text-xs text-muted-foreground">{[file.company_name, file.inquiry_title, formatDate(file.uploaded_at)].filter(Boolean).join(" · ")}</p></Card>) : null}{previewRetention.data.chatCandidates?.length ? previewRetention.data.chatCandidates.map((file) => <Card key={file.id} className="p-3"><b className="block truncate text-sm">{file.file_name}</b><p className="mt-1 truncate text-xs text-muted-foreground">{["Chat upload", file.inquiry_id ? "Inquiry-linked" : "Chat-only", file.retention_expires_at ? `Expires ${formatDate(file.retention_expires_at)}` : null].filter(Boolean).join(" · ")}</p></Card>) : null}{!previewRetention.data.candidates?.length && !previewRetention.data.chatCandidates?.length && <p className="text-sm text-muted-foreground">{previewRetention.data.legalHold ? "Legal hold is active." : "No files are past retention."}</p>}</section>}
     </div></Dialog>
     <Dialog open={dialog === "ai-prompts"} onOpenChange={(open) => !open && setDialog(null)} title="AI prompt registry"><div className="grid gap-3">
+      {aiUsage.data?.usage && <AiUsageSummary usage={aiUsage.data.usage} />}
       {aiPrompts.isLoading ? <p className="text-sm text-muted-foreground">Loading prompt registry...</p> : aiPrompts.data?.prompts?.length ? aiPrompts.data.prompts.map((prompt) => <Card key={prompt.id} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{prompt.id}</b><p className="mt-1 text-xs text-muted-foreground">{prompt.runType} · {prompt.schemaName} · {prompt.modelDefault}</p><p className="mt-2 text-sm leading-5 text-muted-foreground">{prompt.summary}</p><p className="mt-2 text-xs text-muted-foreground">Fallback: {prompt.fallback}</p></div><Badge tone={prompt.status === "active" ? "green" : "slate"}>{prompt.status}</Badge></div></Card>) : <p className="text-sm text-muted-foreground">No prompt versions registered.</p>}
     </div></Dialog>
     <Dialog open={dialog === "notifications"} onOpenChange={(open) => !open && setDialog(null)} title="Preferences"><div className="grid gap-3">
-      <Field label="Default screen"><Select value={rules.defaultView} onValueChange={(defaultView) => setRules({ ...rules, defaultView })} options={[["today", "Today"], ["pipeline", "Inquiries"], ["docs", "Docs"], ["more", "More"]]} /></Field>
+      <Field label="Default screen"><Select value={rules.defaultView} onValueChange={(defaultView) => setRules({ ...rules, defaultView })} options={[["today", "Today"], ["pipeline", "Inquiries"], ["assistant", "Assistant"], ["docs", "Docs"], ["more", "More"]]} /></Field>
       <Field label="Timezone"><Select value={rules.timezone} onValueChange={(timezone) => setRules({ ...rules, timezone })} options={[["America/New_York", "Eastern"], ["America/Chicago", "Central"], ["America/Denver", "Mountain"], ["America/Los_Angeles", "Pacific"]]} /></Field>
       <Field label="Theme"><Select value={rules.theme} onValueChange={(theme) => setRules({ ...rules, theme })} options={[["system", "System"], ["light", "Light"], ["dark", "Dark"]]} /></Field>
       <div className="grid gap-1 rounded-md border border-border p-3"><Checkbox label="High priority inquiry alerts" checked={rules.highPriorityAlerts} onCheckedChange={(value) => setRules({ ...rules, highPriorityAlerts: Boolean(value) })} /><Checkbox label="Lease deadline reminders" checked={rules.leaseDeadlineReminders} onCheckedChange={(value) => setRules({ ...rules, leaseDeadlineReminders: Boolean(value) })} /><Checkbox label="End-of-day digest" checked={rules.dailyDigest} onCheckedChange={(value) => setRules({ ...rules, dailyDigest: Boolean(value) })} /></div>
@@ -535,6 +541,26 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
 function LibraryButton({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-14 items-center gap-2 rounded-md border border-border bg-card px-3 text-left text-sm font-semibold hover:bg-muted/50"><Icon size={19} className="shrink-0 text-muted-foreground" />{label}</button>; }
 function Heading({ children }) { return <h3 className="mb-2 mt-5 text-lg font-bold">{children}</h3>; }
 function Menu({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-12 w-full items-center gap-3 px-1 text-left text-sm font-semibold hover:bg-muted/50"><Icon size={19} className="text-muted-foreground" /><span className="flex-1">{label}</span><ChevronRight size={17} className="text-muted-foreground/70" /></button>; }
+function AiUsageSummary({ usage }) {
+  const metrics = [
+    ["Assistant runs", usage.assistantRuns],
+    ["Chat sessions", usage.chatSessions],
+    ["Chat messages", usage.chatMessages],
+    ["Fallback runs", usage.fallbackRuns],
+    ["Avg latency", usage.averageLatencyMs ? `${Math.round(usage.averageLatencyMs / 100) / 10}s` : "n/a"],
+    ["Uploads", usage.chatFiles]
+  ];
+  return <section className="grid gap-2">
+    <h3 className="text-sm font-bold text-foreground">AI usage</h3>
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      {metrics.map(([label, value]) => <Card key={label} className="p-3"><p className="text-[11px] font-bold uppercase text-muted-foreground">{label}</p><p className="mt-1 text-lg font-black">{value}</p></Card>)}
+    </div>
+    {usage.recentRuns?.length > 0 && <div className="grid gap-2">
+      <b className="text-sm">Recent AI runs</b>
+      {usage.recentRuns.slice(0, 4).map((run) => <Card key={run.id} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{run.run_type}</b><p className="mt-1 truncate text-xs text-muted-foreground">{run.provider} · {run.model_name || "model"} · {formatDate(run.created_at)}</p>{run.error_message && <p className="mt-1 text-xs text-red-700">{run.error_message}</p>}</div><Badge tone={run.status === "success" ? "green" : run.status === "fallback" ? "amber" : "red"}>{run.status}</Badge></div></Card>)}
+    </div>}
+  </section>;
+}
 function parseSettings(value) { try { return typeof value === "string" ? JSON.parse(value) : value || {}; } catch { return {}; } }
 function recentMetadata(item) { return parseSettings(item?.metadata || item?.metadata_json); }
 function roleLabel(role) { return String(role || "user").split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" "); }

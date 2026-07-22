@@ -2,6 +2,12 @@
 node_modules/
 dist/
 .local/
+.tmp-hono*/
+.wrangler/
+outputs/
 .env
 .env.local
 work/
+coverage/
+*.log
+npm-debug.log*

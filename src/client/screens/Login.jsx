@@ -136,6 +136,7 @@ export function LoginScreen({ login, resetPassword, acceptInvite, busy, error, n
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-sm">
             <button type="button" onClick={forgotPassword} disabled={!email.trim()} className="font-semibold text-brand transition-colors hover:text-brand-strong disabled:text-muted-foreground">Forgot password?</button>
             <span className="text-muted-foreground">Need access? Ask an administrator for an invite.</span>
+            <button type="button" onClick={() => notify?.("Ask a workspace administrator to send you an invitation to create your account.")} className="font-semibold text-brand transition-colors hover:text-brand-strong">Create account</button>
           </div>
         </>}
         {mode !== "login" && <a href="/login" className="mt-6 inline-flex text-sm font-bold text-brand hover:text-brand-strong">Back to sign in</a>}

@@ -1,7 +1,7 @@
 import React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
-import { AlertTriangle, Calculator, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, FileCheck, FileImage, FileText, ListChecks, MailCheck, MessageSquareText, RefreshCw, Send, Sparkles, Upload, X } from "lucide-react";
+import { AlertTriangle, Bot, Calculator, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, FileCheck, FileImage, FileText, ListChecks, MailCheck, MessageSquareText, RefreshCw, Send, Sparkles, Upload, X } from "lucide-react";
 import { client } from "../lib/api";
 import { AccordionSection, Badge, Button, Dialog, Field, Select, Textarea } from "../components/ui";
 import { cn, moneyRange } from "../lib/utils";
@@ -14,7 +14,7 @@ const responseGoals = [
 const fileCategoryOptions = [["other", "General document"], ["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
 const uploadShortcuts = [["floor_plan", "Floor plan"], ["equipment_list", "Equipment list"], ["contract", "Contract"], ["email_attachment", "Email attachment"]];
 
-export function EmailScreen({ detail, setNotice, draftScope = "workspace:user" }) {
+export function EmailScreen({ detail, setNotice, draftScope = "workspace:user", navigate }) {
   const queryClient = useQueryClient();
   const existing = detail.documents?.find((document) => document.document_type === "follow_up_email");
   const draftKey = `dcdcom:${draftScope}:email-draft:${detail.inquiry.id}`;
@@ -48,7 +48,10 @@ export function EmailScreen({ detail, setNotice, draftScope = "workspace:user" }
           <h2 className="mt-3 text-2xl font-bold leading-tight text-foreground">Build a client follow-up</h2>
           <p className="mt-1 truncate text-sm text-muted-foreground">{detail.inquiry.title}</p>
         </div>
-        <Badge tone={body.trim() ? "green" : "amber"} className="shrink-0">{body.trim() ? "Draft ready" : "Needs draft"}</Badge>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button type="button" size="sm" variant="outline" className="border-white/25 bg-white/10 text-white hover:bg-white/15" onClick={() => navigate?.("assistant", { inquiry: true })}><Bot size={15} />Ask</Button>
+          <Badge tone={body.trim() ? "green" : "amber"}>{body.trim() ? "Draft ready" : "Needs draft"}</Badge>
+        </div>
       </div>
       <div className="mt-4 grid grid-cols-3 gap-2">
         <MiniMetric label="Missing" value={missingCount} />
@@ -115,7 +118,7 @@ function MiniMetric({ label, value }) {
   </div>;
 }
 
-export function ProposalScreen({ detail, setNotice }) {
+export function ProposalScreen({ detail, setNotice, navigate }) {
   const queryClient = useQueryClient();
   const documents = detail.documents || [];
   const files = detail.files || [];
@@ -264,7 +267,10 @@ export function ProposalScreen({ detail, setNotice }) {
           <h2 className="mt-3 text-2xl font-bold leading-tight">Create project documents</h2>
           <p className="mt-1 truncate text-sm leading-5 text-white/72">{detail.inquiry.title}</p>
         </div>
-        <strong className="shrink-0 rounded-md border border-[#dbe7d2]/25 bg-[#f4f8ef]/[0.1] px-2 py-1 text-right text-sm">{moneyRange(detail.inquiry.estimated_low_cents, detail.inquiry.estimated_high_cents)}<span className="block text-xs font-normal text-white/68">Range</span></strong>
+        <div className="flex shrink-0 items-start gap-2">
+          <Button type="button" size="sm" variant="outline" className="border-white/25 bg-white/10 text-white hover:bg-white/15" onClick={() => navigate?.("assistant", { inquiry: true })}><Bot size={15} />Ask</Button>
+          <strong className="rounded-md border border-[#dbe7d2]/25 bg-[#f4f8ef]/[0.1] px-2 py-1 text-right text-sm">{moneyRange(detail.inquiry.estimated_low_cents, detail.inquiry.estimated_high_cents)}<span className="block text-xs font-normal text-white/68">Range</span></strong>
+        </div>
       </div>
     </header>
 

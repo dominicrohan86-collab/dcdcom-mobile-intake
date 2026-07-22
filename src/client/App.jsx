@@ -6,6 +6,7 @@ import { client } from "./lib/api";
 import { applyPwaUpdate, registerPwa } from "./lib/pwa";
 import { adaptInquiry } from "./lib/utils";
 import { AddInquiryScreen } from "./screens/AddInquiry";
+import { AssistantScreen } from "./screens/Assistant";
 import { EmailScreen, ProposalScreen } from "./screens/Composers";
 import { InquiryDetailScreen, DetailLoading } from "./screens/InquiryDetail";
 import { DocsScreen, MoreScreen } from "./screens/Library";
@@ -13,7 +14,7 @@ import { LoginScreen } from "./screens/Login";
 import { PipelineScreen } from "./screens/Queues";
 import { TodayScreen } from "./screens/Today";
 
-const detailScreens = new Set(["detail", "docs", "email", "proposal"]);
+const detailScreens = new Set(["detail", "docs", "email", "proposal", "assistant"]);
 
 export function App() {
   const queryClient = useQueryClient();
@@ -22,6 +23,7 @@ export function App() {
   const [screen, setScreen] = React.useState(initialRoute.screen);
   const [history, setHistory] = React.useState([]);
   const [selectedId, setSelectedId] = React.useState(initialRoute.selectedId);
+  const [assistantScopeId, setAssistantScopeId] = React.useState(initialRoute.screen === "assistant" ? initialRoute.selectedId : null);
   const [documentToOpen, setDocumentToOpen] = React.useState(null);
   const [actionAlerts, setActionAlerts] = React.useState([]);
   const [analysis, setAnalysis] = React.useState(null);
@@ -51,8 +53,11 @@ export function App() {
       setNotice("");
       setSignedOut(false);
       setHistory([]);
-      await queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
-      replaceUrl("/today");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["bootstrap"] }),
+        queryClient.invalidateQueries({ queryKey: ["inquiry"] })
+      ]);
+      replaceUrl(pathForScreen(screen, screen === "assistant" ? assistantScopeId : selectedId));
     }
   });
   const resetPassword = useMutation({
@@ -99,10 +104,11 @@ export function App() {
 
   React.useEffect(() => {
     const defaultView = bootstrap.data?.preferences?.defaultView || bootstrap.data?.preferences?.default_view;
-    if (!routeInitialized.current && defaultView && ["today", "pipeline", "docs", "more"].includes(defaultView)) {
+    if (!routeInitialized.current && defaultView && ["today", "pipeline", "docs", "assistant", "more"].includes(defaultView)) {
       routeInitialized.current = true;
       setScreen(defaultView);
-      replaceUrl(pathForScreen(defaultView, selectedId));
+      setAssistantScopeId(null);
+      replaceUrl(pathForScreen(defaultView, defaultView === "assistant" ? null : selectedId));
     }
   }, [bootstrap.data?.preferences?.defaultView, bootstrap.data?.preferences?.default_view]);
 
@@ -112,15 +118,16 @@ export function App() {
       setSignedOut(isAuthRoute());
       setScreen(route.screen);
       if (route.selectedId) setSelectedId(route.selectedId);
+      setAssistantScopeId(route.screen === "assistant" ? route.selectedId : null);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   const detail = useQuery({
-    queryKey: ["inquiry", selectedId],
-    queryFn: () => client.inquiry(selectedId),
-    enabled: Boolean(selectedId && detailScreens.has(screen))
+    queryKey: ["inquiry", detailIdForScreen(screen, selectedId, assistantScopeId)],
+    queryFn: () => client.inquiry(detailIdForScreen(screen, selectedId, assistantScopeId)),
+    enabled: Boolean(detailIdForScreen(screen, selectedId, assistantScopeId) && detailScreens.has(screen))
   });
 
   const analyze = useMutation({ mutationFn: (payload) => client.analyze(payload), onSuccess: setAnalysis });
@@ -153,7 +160,9 @@ export function App() {
     if (next !== screen && options.replace !== true) setHistory((items) => [...items.slice(-10), screen]);
     setNotice("");
     setScreen(next);
-    const nextPath = pathForScreen(next, selectedId);
+    const scopedAssistantId = next === "assistant" && options.inquiry ? selectedId : null;
+    setAssistantScopeId(next === "assistant" ? scopedAssistantId : null);
+    const nextPath = pathForScreen(next, next === "assistant" ? scopedAssistantId : selectedId);
     if (options.replace) replaceUrl(nextPath);
     else pushUrl(nextPath);
   }
@@ -163,6 +172,7 @@ export function App() {
       const copy = [...items];
       const previous = copy.pop() || "today";
       setScreen(previous);
+      setAssistantScopeId(null);
       replaceUrl(pathForScreen(previous, selectedId));
       return copy;
     });
@@ -209,7 +219,9 @@ export function App() {
     setNotice("");
     setScreen(next);
     if (id) setSelectedId(id);
-    const nextPath = pathForScreen(next, id);
+    const scopedAssistantId = next === "assistant" && options.inquiry ? id : null;
+    setAssistantScopeId(next === "assistant" ? scopedAssistantId : null);
+    const nextPath = pathForScreen(next, next === "assistant" ? scopedAssistantId : id);
     if (options.replace) replaceUrl(nextPath);
     else pushUrl(nextPath);
   }
@@ -221,18 +233,20 @@ export function App() {
   if (bootstrap.isLoading) return <><main className="grid min-h-dvh place-items-center bg-background text-sm text-muted-foreground"><span className="flex items-center gap-2"><span className="size-4 animate-spin rounded-full border-2 border-border border-t-brand" />Loading workspace...</span></main><ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} /></>;
   if (bootstrap.error) return <><main className="grid min-h-dvh place-items-center bg-background p-6"><EmptyState>Could not load the workspace: {bootstrap.error.message}</EmptyState></main><ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} /></>;
 
-  const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Documents" };
-  const hasBack = ["add", "detail", "email", "proposal"].includes(screen);
+  const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Documents", assistant: "Assistant" };
+  const hasBack = ["add", "detail", "email", "proposal"].includes(screen) || (screen === "assistant" && Boolean(assistantScopeId));
   let content;
 
   if (screen === "today") content = <TodayScreen openWorkflow={openWorkflow} setNotice={setNotice} />;
-  else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} setNotice={setNotice} savedViews={bootstrap.data.personalization?.savedViews || []} />;
+  else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} setNotice={setNotice} />;
   else if (screen === "add") content = <AddInquiryScreen create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} setNotice={setNotice} draftScope={draftScope} />;
-  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} selectedId={selectedId} setNotice={setNotice} />;
+  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} selectedId={selectedId} setNotice={setNotice} navigate={go} />;
+  else if (screen === "assistant" && !assistantScopeId) content = <AssistantScreen user={bootstrap.data.user} setNotice={setNotice} />;
   else if (detail.isLoading || !detail.data) content = detail.error ? <EmptyState>Could not load this inquiry.</EmptyState> : <DetailLoading />;
   else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} user={bootstrap.data.user} navigate={go} openDocument={openDocument} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
-  else if (screen === "email") content = <EmailScreen detail={detail.data} setNotice={setNotice} draftScope={draftScope} />;
-  else if (screen === "proposal") content = <ProposalScreen detail={detail.data} setNotice={setNotice} draftScope={draftScope} />;
+  else if (screen === "assistant") content = <AssistantScreen inquiryId={assistantScopeId} detail={detail.data} user={bootstrap.data.user} setNotice={setNotice} />;
+  else if (screen === "email") content = <EmailScreen detail={detail.data} setNotice={setNotice} draftScope={draftScope} navigate={go} />;
+  else if (screen === "proposal") content = <ProposalScreen detail={detail.data} setNotice={setNotice} draftScope={draftScope} navigate={go} />;
   else if (screen === "docs") content = <DocsScreen inquiries={inquiries} selectedId={selectedId} selectInquiry={(id) => { setSelectedId(id); replaceUrl(pathForScreen("docs", id)); }} detail={detail.data} navigate={go} initialDocumentId={documentToOpen} onDocumentOpened={() => setDocumentToOpen(null)} notify={setNotice} />;
   else content = <TodayScreen openWorkflow={openWorkflow} setNotice={setNotice} />;
 
@@ -311,12 +325,14 @@ function routeFromLocation() {
     if (child === "follow-up") return { screen: "email", selectedId, explicit: true };
     if (child === "proposal") return { screen: "proposal", selectedId, explicit: true };
     if (child === "documents") return { screen: "docs", selectedId, explicit: true };
+    if (child === "assistant") return { screen: "assistant", selectedId, explicit: true };
     return { screen: "detail", selectedId, explicit: true };
   }
   const routes = {
     "/": "today",
     "/today": "today",
     "/inquiries": "pipeline",
+    "/assistant": "assistant",
     "/docs": "docs",
     "/documents": "docs",
     "/profile": "more",
@@ -332,10 +348,16 @@ function pathForScreen(screen, selectedId) {
   if (screen === "detail" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}`;
   if (screen === "email" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/follow-up`;
   if (screen === "proposal" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/proposal`;
+  if (screen === "assistant" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/assistant`;
+  if (screen === "assistant") return "/assistant";
   if (screen === "docs" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/documents`;
   if (screen === "docs") return "/docs";
   if (screen === "more") return "/profile";
   return "/today";
+}
+
+function detailIdForScreen(screen, selectedId, assistantScopeId) {
+  return screen === "assistant" ? assistantScopeId : selectedId;
 }
 
 function pushUrl(path) {

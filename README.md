@@ -18,7 +18,7 @@ The retired vanilla DOM renderer, string-template components, global event binde
 
 ```bash
 npm run dev          # Vite UI and local Worker API at http://127.0.0.1:4173
-npm run db:generate  # Generate a migration after changing db/drizzle-schema.js
+npm run db:generate  # Generate a migration after changing db/schema/drizzle-schema.js
 npm run db:check     # Validate Drizzle migrations
 npm run test:api     # End-to-end API workflow tests
 npm run test:mobile-ui # Source-level mobile workflow regression checks
@@ -30,13 +30,16 @@ npm run verify       # Architecture, API, readiness, and production build gates
 ## Project Structure
 
 - `src/client/` contains the React application, Radix-backed primitives, screens, query client, and Ky API client.
-- `src/server/app.js` declares the Hono routes and Zod validators.
-- `src/server/repository.js` implements all persistence with Drizzle query builders.
-- `db/drizzle-schema.js` is the canonical database schema.
+- `src/server/routes/` declares the Hono routes and request validators.
+- `src/server/repositories/` implements persistence with Drizzle query builders.
+- `src/server/services/`, `src/server/auth/`, `src/server/ai/`, `src/server/integrations/`, `src/server/middleware/`, and `src/server/db/` isolate backend concerns.
+- `src/shared/contracts/` contains cross-boundary Zod request and response contracts.
+- `db/schema/drizzle-schema.js` is the canonical database schema.
 - `db/migrations/` contains Drizzle Kit migration SQL and metadata.
-- `scripts/local-runtime.mjs` provides local D1 and R2-compatible bindings.
-- `scripts/test-api.mjs` exercises the complete inquiry lifecycle through Hono.
-- `docs/stack.md` records package choices and the migration boundary.
+- `infra/database/` and `infra/cloudflare/` contain Drizzle and Cloudflare Worker deployment configuration.
+- `scripts/dev/`, `scripts/build/`, and `scripts/release/` contain local runtime, build, readiness, release, and verification utilities.
+- `tests/api/`, `tests/ui/`, `tests/pwa/`, and `tests/fixtures/` contain regression checks and fixture assets.
+- `docs/architecture/`, `docs/operations/`, and `docs/product/` group technical, runbook, release, and planning docs.
 
 ## Local Runtime
 
@@ -74,7 +77,11 @@ Google Sign-In and Google Calendar use separate callback paths. For sign-in, add
 
 ## Deployment
 
-The Worker expects D1 as `DB`, R2 as `FILES`, and static assets as `ASSETS`. Apply Drizzle migrations to D1 before deployment. `npm run build` writes the Vite client to `dist/client`, a bundled Worker to `dist/server/index.js`, and hosting/database metadata under `dist/.openai`.
+The Worker expects D1 as `DB`, R2 as `FILES`, and static assets as `ASSETS`. Apply Drizzle migrations to D1 before deployment. `npm run build` writes the Vite client to `dist/client` and a bundled Worker to `dist/server/index.js`. Cloudflare deployment config lives in `infra/cloudflare/wrangler.jsonc`; use `npm run deploy` after building.
+
+## Continuous Integration
+
+GitLab CI is configured in `.gitlab-ci.yml`. The pipeline runs Drizzle migration validation, the architecture verifier, API/UI/PWA/readiness/release checks, the production build, and the performance budget check. Build jobs publish `dist/` as a GitLab artifact.
 
 ## Progressive Web App
 
@@ -83,7 +90,7 @@ DCDcom Mobile Intake is installable as a Progressive Web App after it is served 
 - `public/manifest.webmanifest` for app name, launch URL, display mode, shortcuts, screenshots, theme color, and icon metadata.
 - `public/icons/` for Android, iOS, and maskable app icons.
 - `public/sw.js` for conservative app-shell caching, offline navigation fallback, and update activation.
-- A build-time service worker precache list injected by `scripts/build.mjs` so hashed Vite assets are available after the first successful load.
+- A build-time service worker precache list injected by `scripts/build/build.mjs` so hashed Vite assets are available after the first successful load.
 
 The service worker intentionally does not cache `/api/*` requests. Inquiry data, files, auth state, and other private business data remain server-backed; only the app shell and static assets are cached for launch reliability.
 

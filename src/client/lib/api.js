@@ -42,6 +42,25 @@ export const client = {
   saveFileRetention: (json) => api.put("admin/file-retention", { json }).json(),
   runFileRetention: (json = { dryRun: true }) => api.post("admin/file-retention/run", { json }).json(),
   aiPrompts: () => api.get("admin/ai-prompts").json(),
+  aiUsage: () => api.get("admin/ai-usage").json(),
+  chatConfig: () => api.get("chat/config").json(),
+  chatSessions: (params = {}) => api.get("chat/sessions", { searchParams: cleanParams(params) }).json(),
+  createChatSession: (json) => api.post("chat/sessions", { json }).json(),
+  chatMessages: (sessionId) => api.get(`chat/sessions/${sessionId}/messages`).json(),
+  sendChatMessage: (sessionId, json, options = {}) => api.post(`chat/sessions/${sessionId}/messages`, { json, timeout: GENERATION_TIMEOUT_MS, signal: options.signal }).json().catch((error) => {
+    if (isTimeoutError(error)) throw friendlyTimeoutError("Assistant response is taking longer than expected. Please try again in a moment.");
+    throw error;
+  }),
+  chatFiles: (sessionId) => api.get(`chat/sessions/${sessionId}/files`).json(),
+  uploadChatFile: (sessionId, file, { category = "other", linkToInquiry = true } = {}) => {
+    const body = new FormData();
+    body.set("file", file);
+    body.set("category", category);
+    body.set("linkToInquiry", linkToInquiry ? "true" : "false");
+    return api.post(`chat/sessions/${sessionId}/files`, { body }).json();
+  },
+  saveChatNote: (sessionId, json) => api.post(`chat/sessions/${sessionId}/actions/save-note`, { json }).json(),
+  createChatDraft: (sessionId, json) => api.post(`chat/sessions/${sessionId}/actions/create-draft`, { json }).json(),
   bootstrap: () => api.get("bootstrap").json(),
   readiness: () => api.get("readiness").json(),
   saveView: (json) => api.post("personalization/saved-views", { json }).json(),
