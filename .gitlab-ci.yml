@@ -46,6 +46,14 @@ default:
   before_script:
     - node --version
     - npm --version
+    # Runners behind a TLS-inspecting proxy can provide its root CA through the
+    # protected GitLab file variable NPM_CA_CERT. Keep verification enabled and
+    # make the CA available to both Node and npm.
+    - |
+      if [ -n "${NPM_CA_CERT:-}" ] && [ -f "$NPM_CA_CERT" ]; then
+        export NODE_EXTRA_CA_CERTS="$NPM_CA_CERT"
+        npm config set cafile "$NPM_CA_CERT"
+      fi
     - npm ci --cache .npm --prefer-offline
   cache:
     key:
