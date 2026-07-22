@@ -44,16 +44,38 @@ default:
 .node_job:
   extends: .base_job
   before_script:
+    - |
+      set -eu
+
+      test -n "${NPM_CA_CERT:-}" || {
+        echo "ERROR: NPM_CA_CERT is not available."
+        echo "Create it as a GitLab CI/CD File variable."
+        exit 1
+      }
+
+      test -s "$NPM_CA_CERT" || {
+        echo "ERROR: NPM_CA_CERT does not point to a nonempty file."
+        exit 1
+      }
+
+      grep -q 'BEGIN CERTIFICATE' "$NPM_CA_CERT" || {
+        echo "ERROR: NPM_CA_CERT is not a PEM certificate bundle."
+        exit 1
+      }
+
+      if grep -q 'PRIVATE KEY' "$NPM_CA_CERT"; then
+        echo "ERROR: NPM_CA_CERT must not contain a private key."
+        exit 1
+      fi
+
+      export NODE_EXTRA_CA_CERTS="$NPM_CA_CERT"
+      export NPM_CONFIG_CAFILE="$NPM_CA_CERT"
+
+      echo "Corporate CA configured for Node and npm."
     - node --version
     - npm --version
-    # Runners behind a TLS-inspecting proxy can provide its root CA through the
-    # protected GitLab file variable NPM_CA_CERT. Keep verification enabled and
-    # make the CA available to both Node and npm.
-    - |
-      if [ -n "${NPM_CA_CERT:-}" ] && [ -f "$NPM_CA_CERT" ]; then
-        export NODE_EXTRA_CA_CERTS="$NPM_CA_CERT"
-        npm config set cafile "$NPM_CA_CERT"
-      fi
+    - npm config get cafile
+    - npm ping
     - npm ci --cache .npm --prefer-offline
   cache:
     key:
