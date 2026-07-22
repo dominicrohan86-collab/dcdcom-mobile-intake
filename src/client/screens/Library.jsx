@@ -1,7 +1,7 @@
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
-import { Activity, Archive, ArrowLeft, Bell, Bot, CalendarDays, ChevronRight, CircleHelp, Clock, Download, ExternalLink, Eye, FileImage, FileText, FolderOpen, Image, KeyRound, Link2, Mail, Paperclip, RefreshCw, Search, ServerCog, Share2, ShieldCheck, SlidersHorizontal, Trash2, UserRound } from "lucide-react";
+import { Activity, Archive, ArrowLeft, Bot, CalendarDays, ChevronRight, CircleHelp, Clock, Download, ExternalLink, Eye, FileImage, FileText, FolderOpen, Image, KeyRound, Mail, Paperclip, Search, ServerCog, Share2, SlidersHorizontal } from "lucide-react";
 import { client } from "../lib/api";
 import { Badge, Button, Card, Checkbox, Dialog, EmptyState, Field, Input, Select } from "../components/ui";
 import { adaptInquiry, cn } from "../lib/utils";
@@ -372,24 +372,11 @@ function versionComparison(current, previous) {
 function wordCount(value) { return String(value || "").trim().split(/\s+/).filter(Boolean).length; }
 function paragraphs(value) { return String(value || "").split(/\n{2,}|\n/).map((part) => part.trim()).filter(Boolean); }
 
-export function MoreScreen({ user, preferences, personalization, integrations, selectedId, setNotice, navigate }) {
+export function MoreScreen({ user, preferences, personalization, setNotice, navigate }) {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = React.useState(null);
-  const settings = parseSettings(preferences?.settings_json);
-  const [rules, setRules] = React.useState({
-    highPriorityAlerts: settings.highPriorityAlerts !== false,
-    leaseDeadlineReminders: settings.leaseDeadlineReminders !== false,
-    dailyDigest: Boolean(settings.dailyDigest),
-    defaultView: preferences?.default_view || preferences?.defaultView || "today",
-    timezone: preferences?.timezone || user?.timezone || "America/New_York",
-    theme: settings.theme || "system"
-  });
-  const [name, setName] = React.useState(user?.fullName || user?.full_name || "Alex Morgan");
-  const [passwords, setPasswords] = React.useState({ currentPassword: "", newPassword: "" });
   const [invite, setInvite] = React.useState({ email: "", role: "estimator" });
-  const [viewDraft, setViewDraft] = React.useState({ screen: "inquiries", name: "", isDefault: false });
   const [retentionDraft, setRetentionDraft] = React.useState({ retentionDays: 365, archiveAfterDays: 180, legalHold: false });
-  const sessions = useQuery({ queryKey: ["security", "sessions"], queryFn: client.sessions, enabled: dialog === "security" });
   const admin = useQuery({ queryKey: ["admin", "users"], queryFn: client.adminUsers, enabled: dialog === "admin" });
   const audit = useQuery({ queryKey: ["admin", "audit"], queryFn: () => client.auditLog({ limit: 25 }), enabled: dialog === "audit" });
   const readiness = useQuery({ queryKey: ["readiness"], queryFn: client.readiness, enabled: dialog === "health" });
@@ -397,40 +384,15 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
   const retention = useQuery({ queryKey: ["admin", "file-retention"], queryFn: client.fileRetention, enabled: dialog === "retention" });
   const aiPrompts = useQuery({ queryKey: ["admin", "ai-prompts"], queryFn: client.aiPrompts, enabled: dialog === "ai-prompts" });
   const aiUsage = useQuery({ queryKey: ["admin", "ai-usage"], queryFn: client.aiUsage, enabled: dialog === "ai-prompts" });
-  const profile = useMutation({ mutationFn: () => client.saveProfile({ fullName: name }), onSuccess: () => { setNotice("Profile saved."); setDialog(null); queryClient.invalidateQueries({ queryKey: ["bootstrap"] }); } });
-  const saveRules = useMutation({ mutationFn: () => client.saveSettings(rules), onSuccess: () => { setNotice("Preferences saved."); setDialog(null); queryClient.invalidateQueries({ queryKey: ["bootstrap"] }); } });
-  const changePassword = useMutation({ mutationFn: () => client.changePassword(passwords), onSuccess: () => { setNotice("Password changed. Sign in again on this device."); window.location.assign("/login"); } });
-  const revoke = useMutation({ mutationFn: (id) => client.revokeSession(id), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["security", "sessions"] }) });
   const createInvite = useMutation({ mutationFn: () => client.createInvite(invite), onSuccess: (result) => { setInvite({ email: "", role: "estimator" }); setNotice(result.invite?.inviteUrl ? `Invite created: ${result.invite.inviteUrl}` : "Invite created."); queryClient.invalidateQueries({ queryKey: ["admin", "users"] }); } });
   const updateUser = useMutation({ mutationFn: ({ id, patch }) => client.updateUser(id, patch), onSuccess: () => { setNotice("User updated."); queryClient.invalidateQueries({ queryKey: ["admin", "users"] }); queryClient.invalidateQueries({ queryKey: ["bootstrap"] }); } });
-  const saveView = useMutation({ mutationFn: () => client.saveView({ ...viewDraft, filters: {}, sort: {} }), onSuccess: () => { setViewDraft({ screen: "inquiries", name: "", isDefault: false }); setNotice("Saved view updated."); queryClient.invalidateQueries({ queryKey: ["bootstrap"] }); } });
-  const deleteView = useMutation({ mutationFn: (id) => client.deleteView(id), onSuccess: () => { setNotice("Saved view deleted."); queryClient.invalidateQueries({ queryKey: ["bootstrap"] }); } });
   const saveRetention = useMutation({ mutationFn: () => client.saveFileRetention(retentionDraft), onSuccess: () => { setNotice("File retention policy saved."); queryClient.invalidateQueries({ queryKey: ["admin", "file-retention"] }); } });
   const previewRetention = useMutation({ mutationFn: () => client.runFileRetention({ dryRun: true, limit: 25 }) });
-  const connect = useMutation({
-    mutationFn: (provider) => client.connectIntegration(provider),
-    onSuccess: (result, provider) => {
-      setNotice("Integration connected.");
-      queryClient.invalidateQueries({ queryKey: ["bootstrap"] });
-    }
-  });
-  function connectProvider(provider) {
-    if (provider === "calendar") window.location.assign("/api/integrations/google-calendar/connect");
-    else connect.mutate(provider);
-  }
-  const sync = useMutation({ mutationFn: () => client.sync(selectedId), onSuccess: () => setNotice("Inquiry synced to CRM.") });
   const moreErrorMessage = [
-    profile.error,
-    saveRules.error,
-    changePassword.error,
     createInvite.error,
     updateUser.error,
-    saveView.error,
-    deleteView.error,
     saveRetention.error,
     previewRetention.error,
-    connect.error,
-    sync.error,
     audit.error,
     readiness.error,
     providerQueue.error,
@@ -445,11 +407,10 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
     const policy = retention.data?.policy;
     if (policy) setRetentionDraft({ retentionDays: policy.retention_days || 365, archiveAfterDays: policy.archive_after_days || 180, legalHold: Boolean(policy.legal_hold) });
   }, [retention.data?.policy]);
-  const savedViewCount = personalization?.savedViews?.length || 0;
   const recentItems = personalization?.recentItems || personalization?.recent_items || [];
   return <>
     <h2 className="text-3xl font-bold">More</h2>
-    <div className="mt-3 rounded-md border border-brand/25 bg-brand-muted p-3 text-sm text-brand-muted-foreground"><b>{user?.fullName || "Your workspace"}</b><span className="mt-1 block text-xs opacity-85">{savedViewCount} saved views · {rules.timezone} · {roleLabel(user?.role)}</span></div>
+    <p className="mt-2 text-sm leading-6 text-muted-foreground">Workspace tools, administration, and support.</p>
     <section className="mt-4">
       <div className="mb-2 flex items-center justify-between gap-3">
         <h3 className="text-sm font-bold text-foreground">Recent work</h3>
@@ -468,18 +429,17 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
         }) : <p className="px-3 py-4 text-sm text-muted-foreground">Open an inquiry to build your recent workspace.</p>}
       </div>
     </section>
-    <div className="mt-4 divide-y divide-border border-y border-border"><Menu icon={FileText} label="Docs & files" action={() => navigate?.("docs")} /><Menu icon={UserRound} label="Account" action={() => setDialog("account")} /><Menu icon={ShieldCheck} label="Security" action={() => setDialog("security")} /><Menu icon={SlidersHorizontal} label="Saved views" action={() => setDialog("views")} />{user?.role && ["admin", "project_manager"].includes(user.role) && <Menu icon={KeyRound} label="Admin users" action={() => setDialog("admin")} />}{user?.role === "admin" && <Menu icon={Activity} label="Audit history" action={() => setDialog("audit")} />}{user?.role === "admin" && <Menu icon={Archive} label="File retention" action={() => setDialog("retention")} />}{user?.role === "admin" && <Menu icon={Bot} label="AI prompt registry" action={() => setDialog("ai-prompts")} />}{user?.role === "admin" && <Menu icon={ServerCog} label="System health" action={() => setDialog("health")} />}<Menu icon={Bell} label="Preferences" action={() => setDialog("notifications")} /><Menu icon={Link2} label="Integrations" action={() => setDialog("integrations")} /><Menu icon={CircleHelp} label="Help" action={() => setDialog("help")} /><Menu icon={RefreshCw} label="Sync selected inquiry" action={() => sync.mutate()} /></div>
-    <Dialog open={dialog === "account"} onOpenChange={(open) => !open && setDialog(null)} title="Account"><form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); profile.mutate(); }}><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Email"><Input value={user?.email || ""} readOnly /></Field><Button type="submit">Save profile</Button></form></Dialog>
-    <Dialog open={dialog === "security"} onOpenChange={(open) => !open && setDialog(null)} title="Security"><div className="grid gap-4">
-      <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); changePassword.mutate(); }}>
-        <b className="text-sm">Change password</b>
-        <Field label="Current password"><Input type="password" value={passwords.currentPassword} onChange={(event) => setPasswords({ ...passwords, currentPassword: event.target.value })} /></Field>
-        <Field label="New password"><Input type="password" value={passwords.newPassword} onChange={(event) => setPasswords({ ...passwords, newPassword: event.target.value })} /></Field>
-        <Button type="submit" disabled={changePassword.isPending || passwords.newPassword.length < 10}>Update password</Button>
-      </form>
-      <Card className="p-3"><div className="flex items-start gap-3"><ShieldCheck size={19} className="mt-0.5 text-brand-700" /><div><b className="text-sm">Google identity</b><p className="mt-1 text-sm leading-5 text-muted-foreground">Google Sign-In can be connected with OAuth credentials for this workspace.</p></div></div></Card>
-      <div><b className="text-sm">Active sessions</b><div className="mt-2 grid gap-2">{sessions.isLoading ? <p className="text-sm text-muted-foreground">Loading sessions...</p> : sessions.data?.sessions?.length ? sessions.data.sessions.map((session) => <Card key={session.id} className="flex items-center justify-between gap-3 p-3"><div><p className="text-sm font-semibold">{session.id}</p><p className="text-xs text-muted-foreground">Expires {formatDate(session.expiresAt)}</p></div><Button size="sm" variant="outline" onClick={() => revoke.mutate(session.id)} disabled={revoke.isPending}>Revoke</Button></Card>) : <p className="text-sm text-muted-foreground">No active sessions found.</p>}</div></div>
-    </div></Dialog>
+    <MoreGroup title="Workspace tools">
+      <Menu icon={FileText} label="Docs & files" description="Browse generated work and source files" action={() => navigate?.("docs")} />
+    </MoreGroup>
+    {user?.role && ["admin", "project_manager"].includes(user.role) && <MoreGroup title="Administration">
+      <Menu icon={KeyRound} label="Admin users" description="Manage teammates, access, and invitations" action={() => setDialog("admin")} />
+      {user?.role === "admin" && <Menu icon={Activity} label="Audit history" description="Review changes across the workspace" action={() => setDialog("audit")} />}
+      {user?.role === "admin" && <Menu icon={Archive} label="File retention" description="Configure storage and cleanup policy" action={() => setDialog("retention")} />}
+      {user?.role === "admin" && <Menu icon={Bot} label="AI prompt registry" description="Inspect prompt versions and AI usage" action={() => setDialog("ai-prompts")} />}
+      {user?.role === "admin" && <Menu icon={ServerCog} label="System health" description="Check readiness and provider queues" action={() => setDialog("health")} />}
+    </MoreGroup>}
+    <MoreGroup title="Support"><Menu icon={CircleHelp} label="Help & support" description="Contact DC Decom operations support" action={() => setDialog("help")} /></MoreGroup>
     <Dialog open={dialog === "admin"} onOpenChange={(open) => !open && setDialog(null)} title="Admin Users"><div className="grid gap-4">
       <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); createInvite.mutate(); }}>
         <b className="text-sm">Invite teammate</b>
@@ -489,16 +449,6 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
       </form>
       <div className="grid gap-2">{admin.isLoading ? <p className="text-sm text-muted-foreground">Loading users...</p> : (admin.data?.users || []).map((item) => <Card key={item.id} className="grid gap-3 p-3"><div><b className="text-sm">{item.fullName}</b><p className="text-xs text-muted-foreground">{item.email} · {roleLabel(item.role)} · {item.isActive ? "Active" : "Inactive"}</p></div><div className="grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { isActive: !item.isActive } })}>{item.isActive ? "Deactivate" : "Activate"}</Button><Button size="sm" variant="outline" onClick={() => updateUser.mutate({ id: item.id, patch: { role: item.role === "admin" ? "estimator" : "admin" } })}>{item.role === "admin" ? "Make estimator" : "Make admin"}</Button></div></Card>)}</div>
       {admin.data?.invites?.length > 0 && <div><b className="text-sm">Recent invites</b><div className="mt-2 grid gap-2">{admin.data.invites.map((item) => <Card key={item.id} className="p-3"><p className="text-sm font-semibold">{item.email}</p><p className="text-xs text-muted-foreground">{roleLabel(item.role)} · {item.acceptedAt ? "Accepted" : item.revokedAt ? "Revoked" : "Pending"}</p></Card>)}</div></div>}
-    </div></Dialog>
-    <Dialog open={dialog === "views"} onOpenChange={(open) => !open && setDialog(null)} title="Saved views"><div className="grid gap-4">
-      <form className="grid gap-3 rounded-md border border-border p-3" onSubmit={(event) => { event.preventDefault(); saveView.mutate(); }}>
-        <b className="text-sm">Create saved view</b>
-        <Field label="Name"><Input value={viewDraft.name} onChange={(event) => setViewDraft({ ...viewDraft, name: event.target.value })} placeholder="Operations review" /></Field>
-        <Field label="Screen"><Select value={viewDraft.screen} onValueChange={(screen) => setViewDraft({ ...viewDraft, screen })} options={[["today", "Today"], ["inquiries", "Inquiries"], ["docs", "Docs"], ["composers", "Composers"], ["assistant", "Assistant"], ["admin", "Admin"]]} /></Field>
-        <Checkbox label="Use as default view" checked={viewDraft.isDefault} onCheckedChange={(value) => setViewDraft({ ...viewDraft, isDefault: Boolean(value) })} />
-        <Button type="submit" disabled={saveView.isPending || !viewDraft.name.trim()}>Save view</Button>
-      </form>
-      <div className="grid gap-2">{(personalization?.savedViews || []).length ? personalization.savedViews.map((view) => <Card key={view.id} className="grid grid-cols-[minmax(0,1fr)_40px] items-center gap-3 p-3"><div className="min-w-0"><b className="truncate text-sm">{view.name}</b><p className="mt-1 text-xs text-muted-foreground">{screenLabel(view.screen)}{view.is_default || view.isDefault ? " · Default" : ""}</p></div><Button size="icon" variant="ghost" aria-label={`Delete ${view.name}`} onClick={() => deleteView.mutate(view.id)} disabled={deleteView.isPending}><Trash2 size={17} /></Button></Card>) : <p className="text-sm text-muted-foreground">No saved views yet.</p>}</div>
     </div></Dialog>
     <Dialog open={dialog === "audit"} onOpenChange={(open) => !open && setDialog(null)} title="Audit history"><div className="grid gap-2">{audit.isLoading ? <p className="text-sm text-muted-foreground">Loading audit history...</p> : audit.data?.events?.length ? audit.data.events.map((event) => <Card key={event.id} className="p-3"><div className="flex items-start justify-between gap-3"><div><b className="text-sm">{event.action}</b><p className="mt-1 text-xs text-muted-foreground">{event.entity_type} · {event.entity_id}</p></div><span className="shrink-0 text-xs text-muted-foreground">{formatDate(event.created_at)}</span></div></Card>) : <p className="text-sm text-muted-foreground">No audit events yet.</p>}</div></Dialog>
     <Dialog open={dialog === "health"} onOpenChange={(open) => !open && setDialog(null)} title="System health"><div className="grid gap-3">
@@ -523,24 +473,17 @@ export function MoreScreen({ user, preferences, personalization, integrations, s
       {aiUsage.data?.usage && <AiUsageSummary usage={aiUsage.data.usage} />}
       {aiPrompts.isLoading ? <p className="text-sm text-muted-foreground">Loading prompt registry...</p> : aiPrompts.data?.prompts?.length ? aiPrompts.data.prompts.map((prompt) => <Card key={prompt.id} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><b className="block truncate text-sm">{prompt.id}</b><p className="mt-1 text-xs text-muted-foreground">{prompt.runType} · {prompt.schemaName} · {prompt.modelDefault}</p><p className="mt-2 text-sm leading-5 text-muted-foreground">{prompt.summary}</p><p className="mt-2 text-xs text-muted-foreground">Fallback: {prompt.fallback}</p></div><Badge tone={prompt.status === "active" ? "green" : "slate"}>{prompt.status}</Badge></div></Card>) : <p className="text-sm text-muted-foreground">No prompt versions registered.</p>}
     </div></Dialog>
-    <Dialog open={dialog === "notifications"} onOpenChange={(open) => !open && setDialog(null)} title="Preferences"><div className="grid gap-3">
-      <Field label="Default screen"><Select value={rules.defaultView} onValueChange={(defaultView) => setRules({ ...rules, defaultView })} options={[["today", "Today"], ["pipeline", "Inquiries"], ["assistant", "Assistant"], ["docs", "Docs"], ["more", "More"]]} /></Field>
-      <Field label="Timezone"><Select value={rules.timezone} onValueChange={(timezone) => setRules({ ...rules, timezone })} options={[["America/New_York", "Eastern"], ["America/Chicago", "Central"], ["America/Denver", "Mountain"], ["America/Los_Angeles", "Pacific"]]} /></Field>
-      <Field label="Theme"><Select value={rules.theme} onValueChange={(theme) => setRules({ ...rules, theme })} options={[["system", "System"], ["light", "Light"], ["dark", "Dark"]]} /></Field>
-      <div className="grid gap-1 rounded-md border border-border p-3"><Checkbox label="High priority inquiry alerts" checked={rules.highPriorityAlerts} onCheckedChange={(value) => setRules({ ...rules, highPriorityAlerts: Boolean(value) })} /><Checkbox label="Lease deadline reminders" checked={rules.leaseDeadlineReminders} onCheckedChange={(value) => setRules({ ...rules, leaseDeadlineReminders: Boolean(value) })} /><Checkbox label="End-of-day digest" checked={rules.dailyDigest} onCheckedChange={(value) => setRules({ ...rules, dailyDigest: Boolean(value) })} /></div>
-      <Button className="mt-2" onClick={() => saveRules.mutate()} disabled={saveRules.isPending}>{saveRules.isPending ? "Saving..." : "Save preferences"}</Button>
-    </div></Dialog>
-    <Dialog open={dialog === "integrations"} onOpenChange={(open) => !open && setDialog(null)} title="Integrations"><div className="grid gap-2">{["crm", "email", "calendar"].map((provider) => { const connected = integrations?.some((item) => item.provider === provider && item.status === "connected" && (provider !== "calendar" || item.display_name === "Google Calendar")); return <Card key={provider} className="flex items-center justify-between gap-3 p-3"><div><b className="capitalize">{provider === "calendar" ? "Google Calendar" : provider}</b><span className="block text-xs text-muted-foreground">{connected ? "Connected" : "Not connected"}</span></div><Button size="sm" variant={connected ? "outline" : "default"} onClick={() => connectProvider(provider)} disabled={connect.isPending}>{connected ? "Reconnect" : "Connect"}</Button></Card>; })}</div></Dialog>
     <Dialog open={dialog === "help"} onOpenChange={(open) => !open && setDialog(null)} title="Help & support"><div className="grid gap-3">
       <Card className="p-3"><b className="text-sm">DC Decom operations support</b><p className="mt-1 text-sm leading-5 text-muted-foreground">support@dcdcom.com</p></Card>
-      <Card className="p-3"><b className="text-sm">Workspace context</b><p className="mt-1 text-sm leading-5 text-muted-foreground">{user?.email || "Signed-in user"} · {roleLabel(user?.role)} · {rules.timezone}</p></Card>
+      <Card className="p-3"><b className="text-sm">Workspace context</b><p className="mt-1 text-sm leading-5 text-muted-foreground">{user?.email || "Signed-in user"} · {roleLabel(user?.role)} · {preferences?.timezone || user?.timezone || "America/New_York"}</p></Card>
     </div></Dialog>
   </>;
 }
 
 function LibraryButton({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-14 items-center gap-2 rounded-md border border-border bg-card px-3 text-left text-sm font-semibold hover:bg-muted/50"><Icon size={19} className="shrink-0 text-muted-foreground" />{label}</button>; }
 function Heading({ children }) { return <h3 className="mb-2 mt-5 text-lg font-bold">{children}</h3>; }
-function Menu({ icon: Icon, label, action }) { return <button onClick={action} className="flex min-h-12 w-full items-center gap-3 px-1 text-left text-sm font-semibold hover:bg-muted/50"><Icon size={19} className="text-muted-foreground" /><span className="flex-1">{label}</span><ChevronRight size={17} className="text-muted-foreground/70" /></button>; }
+function MoreGroup({ title, children }) { return <section className="mt-5"><h3 className="mb-2 text-xs font-black uppercase tracking-[0.08em] text-muted-foreground">{title}</h3><div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card shadow-sm">{children}</div></section>; }
+function Menu({ icon: Icon, label, description, action }) { return <button onClick={action} className="flex min-h-16 w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/50"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><Icon size={18} /></span><span className="min-w-0 flex-1"><b className="block text-sm text-foreground">{label}</b>{description && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{description}</span>}</span><ChevronRight size={17} className="shrink-0 text-muted-foreground/70" /></button>; }
 function AiUsageSummary({ usage }) {
   const metrics = [
     ["Assistant runs", usage.assistantRuns],
@@ -564,7 +507,6 @@ function AiUsageSummary({ usage }) {
 function parseSettings(value) { try { return typeof value === "string" ? JSON.parse(value) : value || {}; } catch { return {}; } }
 function recentMetadata(item) { return parseSettings(item?.metadata || item?.metadata_json); }
 function roleLabel(role) { return String(role || "user").split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" "); }
-function screenLabel(screen) { return roleLabel(screen === "docs" ? "docs" : screen || "workspace"); }
 function statusLabel(status) { return status ? roleLabel(status) : ""; }
 function checkLabel(key) { return String(key || "check").split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" "); }
 function providerQueueTone(status) { return ({ queued: "amber", failed: "red", success: "green", sent: "green" })[status] || "slate"; }

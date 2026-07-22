@@ -90,7 +90,7 @@ export function Shell({ screen, navigate, children, title, back, user, openNotif
                 </div>
               </div>
               <div className="grid gap-1 py-2 text-sm">
-                <button type="button" onClick={() => { setProfileOpen(false); navigate("more"); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-left font-semibold hover:bg-muted"><Settings size={16} className="text-muted-foreground" /> Preferences</button>
+                <button type="button" onClick={() => { setProfileOpen(false); navigate("preferences"); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-left font-semibold hover:bg-muted"><Settings size={16} className="text-muted-foreground" /> Preferences</button>
                 <button type="button" onClick={() => { setProfileOpen(false); navigate("more"); }} className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-left font-semibold hover:bg-muted"><CircleHelp size={16} className="text-muted-foreground" /> Help</button>
                 <span className="flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-muted-foreground"><ShieldCheck size={16} /> {roleLabel(user?.role)} &middot; DC Decom</span>
               </div>

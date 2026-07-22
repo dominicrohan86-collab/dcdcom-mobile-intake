@@ -7,6 +7,7 @@ const files = {
   login: await readFile("src/client/screens/Login.jsx", "utf8"),
   detail: await readFile("src/client/screens/InquiryDetail.jsx", "utf8"),
   docs: await readFile("src/client/screens/Library.jsx", "utf8"),
+  preferences: await readFile("src/client/screens/Preferences.jsx", "utf8"),
   notifications: await readFile("src/client/components/NotificationBell.jsx", "utf8"),
   css: await readFile("src/client/styles/styles.css", "utf8")
 };
@@ -23,9 +24,11 @@ for (const token of ["type=\"email\"", "type=\"password\"", "Forgot password?", 
   assert(files.login.includes(token), `Login should include accessible ${token}`);
 }
 
-for (const token of ["aria-label={`Delete", "aria-label=\"Primary inquiry actions\"", "Add a comment"]) {
+for (const token of ["aria-label={`Delete", "aria-label=\"Inquiry sections\"", "Add a comment"]) {
   assert(files.detail.includes(token), `Inquiry detail should include ${token}`);
 }
+
+assert(files.preferences.includes('aria-label="Preference sections"') && files.preferences.includes('aria-current={section === value ? "page" : undefined}'), "Preferences should expose an accessible section selector");
 
 for (const token of ["No notifications yet", "Could not load notifications", "aria-expanded"]) {
   assert(files.notifications.includes(token), `Notifications should include ${token}`);

@@ -103,7 +103,6 @@ export const client = {
   saveProfile: (json) => api.patch("profile", { json }).json(),
   saveSettings: (json) => api.put("settings", { json }).json(),
   connectIntegration: (provider) => api.post("integrations", { json: { provider } }).json(),
-  sync: (id, provider = "crm") => api.post(`inquiries/${id}/sync`, { json: { provider } }).json(),
   shareFile: (id, json = {}) => api.post(`files/${id}/share-links`, { json }).json(),
   fileShareLinks: (id) => api.get(`files/${id}/share-links`).json(),
   revokeFileShare: (id) => api.delete(`file-share-links/${id}`).json(),

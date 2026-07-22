@@ -11,13 +11,14 @@ const files = {
   docs: await readFile("src/client/screens/Library.jsx", "utf8"),
   login: await readFile("src/client/screens/Login.jsx", "utf8"),
   pipeline: await readFile("src/client/screens/Queues.jsx", "utf8"),
+  preferences: await readFile("src/client/screens/Preferences.jsx", "utf8"),
   today: await readFile("src/client/screens/Today.jsx", "utf8"),
   composers: await readFile("src/client/screens/Composers.jsx", "utf8"),
   api: await readFile("src/client/lib/api.js", "utf8"),
   css: await readFile("src/client/styles/styles.css", "utf8")
 };
 
-for (const screen of ["today", "pipeline", "add", "assistant", "docs", "more", "detail", "email", "proposal"]) {
+for (const screen of ["today", "pipeline", "add", "assistant", "docs", "more", "preferences", "detail", "email", "proposal"]) {
   assert(files.app.includes(`"${screen}"`), `App should route the ${screen} screen`);
 }
 
@@ -29,7 +30,7 @@ assert(files.app.includes("LoginScreen") && files.app.includes("isUnauthorized")
 for (const path of ["/login", "/reset-password", "/accept-invite"]) {
   assert(files.app.includes(path), `Signed-out state should survive refresh on ${path}`);
 }
-for (const path of ["/today", "/inquiries", "/inquiries/new", "/assistant", "/inquiries/${encodeURIComponent(selectedId)}", "/inquiries/${encodeURIComponent(selectedId)}/assistant", "/inquiries/${encodeURIComponent(selectedId)}/follow-up", "/inquiries/${encodeURIComponent(selectedId)}/proposal", "/inquiries/${encodeURIComponent(selectedId)}/documents", "/profile"]) {
+for (const path of ["/today", "/inquiries", "/inquiries/new", "/assistant", "/inquiries/${encodeURIComponent(selectedId)}", "/inquiries/${encodeURIComponent(selectedId)}/assistant", "/inquiries/${encodeURIComponent(selectedId)}/follow-up", "/inquiries/${encodeURIComponent(selectedId)}/proposal", "/inquiries/${encodeURIComponent(selectedId)}/documents", "/more", "/profile", "/preferences"]) {
   assert(files.app.includes(path), `App should support URL-backed route ${path}`);
 }
 assert(files.login.includes("Continue with Google") && files.login.includes("Forgot password?") && files.login.includes("Reset password") && files.login.includes("Accept invite") && files.login.includes("Need access? Ask an administrator for an invite.") && files.login.includes("DC Decom"), "Login screen should support password, Google, reset, and invite-only entry points");
@@ -40,9 +41,10 @@ assert(files.shell.includes("lg:hidden") && files.shell.includes("h-[76px]") && 
 assert(files.shell.includes("<aside") && files.shell.includes("Sign out") && files.shell.includes("Help") && files.shell.includes("roleLabel"), "Desktop shell should expose a signed-in side rail and profile menu");
 assert(!files.pipeline.includes("Filtered by") && !files.pipeline.includes("stageFromSavedView") && files.pipeline.includes("Inquiry filters"), "Inquiry pipeline should select and clear filters only from the filter menu");
 assert(files.docs.includes('label="Docs & files"') && files.app.includes("navigate={go}"), "More should retain mobile access to Docs after it leaves the bottom bar");
-assert(files.docs.includes("Security") && files.docs.includes("Change password") && files.docs.includes("Active sessions") && files.docs.includes("Google identity"), "More/Profile should expose signed-in security state");
+assert(files.shell.includes('navigate("preferences")') && files.app.includes("PreferencesScreen"), "Profile menu should open the routed Preferences page");
+assert(files.preferences.includes("Security") && files.preferences.includes("Change password") && files.preferences.includes("Active sessions") && files.preferences.includes("Google identity"), "Preferences should expose signed-in security state");
 assert(files.docs.includes("Admin users") && files.docs.includes("Invite teammate") && files.docs.includes("Create invite"), "More/Profile should expose admin user and invite management");
-assert(files.docs.includes("Saved views") && files.docs.includes("Create saved view") && files.docs.includes("Audit history"), "More/Profile should expose saved-view management and audit visibility");
+assert(files.preferences.includes("Saved views") && files.preferences.includes("Create a view") && files.docs.includes("Audit history"), "Preferences should manage saved views while More retains audit visibility");
 assert(files.api.includes("saveView") && files.api.includes("deleteView") && files.api.includes("auditLog"), "Client API should expose saved-view and audit endpoints");
 assert(files.docs.includes("System health") && files.docs.includes("Readiness status") && files.api.includes("readiness"), "More/Profile should expose admin system health backed by readiness");
 assert(files.docs.includes("Provider queue") && files.api.includes("providerQueue"), "System health should expose provider queue visibility");
@@ -50,7 +52,11 @@ assert(files.docs.includes("File retention") && files.docs.includes("Preview cle
 assert(files.docs.includes("AI prompt registry") && files.docs.includes("Prompt version") && files.api.includes("aiPrompts"), "More/Profile and document preview should expose AI prompt registry and prompt version lineage");
 assert(files.docs.includes("AI usage") && files.docs.includes("AiUsageSummary") && files.api.includes("aiUsage"), "More/Profile should expose AI usage observability");
 assert(files.docs.includes("Help & support") && files.docs.includes("support@dcdcom.com"), "More/Profile should expose help and support context");
-assert(files.docs.includes("Default screen") && files.docs.includes("Timezone") && files.docs.includes("Theme") && files.docs.includes("Save preferences"), "More/Profile should expose default view, timezone, and theme preferences");
+assert(files.preferences.includes("Default screen") && files.preferences.includes("Timezone") && files.preferences.includes("Theme") && files.preferences.includes("Save preferences"), "Preferences should expose default view, timezone, and theme settings");
+assert(files.preferences.includes("Account") && files.preferences.includes("Connected services") && files.preferences.includes("Saved views") && !files.docs.includes('label="Account"') && !files.docs.includes('label="Security"') && !files.docs.includes('label="Preferences"') && !files.docs.includes('label="Integrations"'), "Profile-like options should live on Preferences and not appear in More navigation");
+assert(files.preferences.includes("Preference categories") && files.preferences.includes("All preferences") && files.preferences.includes('section ? "hidden" : "block"') && files.preferences.includes("lg:sticky"), "Preferences should use a mobile category index and a desktop settings sidebar instead of horizontal tabs");
+assert(files.preferences.includes('grid min-w-0 grid-cols-[minmax(0,1fr)_auto]') && files.preferences.includes('title={sessionItem.id}') && files.preferences.includes('min-w-0 max-w-full overflow-hidden'), "Security preferences should constrain long session identifiers without overflowing the mobile viewport");
+assert(!files.preferences.includes('"crm"') && !files.preferences.includes(">CRM<") && !files.docs.includes("Sync selected inquiry") && !files.api.includes('provider = "crm"'), "Client UI should not offer or reference an external CRM connector");
 assert(files.docs.includes("Recent work") && files.docs.includes("recentItems"), "More/Profile should surface personalized recent work");
 assert(files.app.includes("default_view") && files.app.includes("defaultView"), "App should honor persisted default view from bootstrap");
 assert(files.app.includes("AssistantScreen") && files.app.includes("assistantScopeId") && files.app.includes("detailIdForScreen"), "App should route workspace and inquiry-scoped assistant screens distinctly");
@@ -72,17 +78,24 @@ assert(files.detail.includes("thumbnailUrl(file)") && files.docs.includes("/thum
 assert(files.detail.includes("OwnerPanel") && files.detail.includes("Assign inquiry owner") && files.api.includes("updateOwner"), "Detail screen should expose owner assignment for managers");
 assert(files.api.includes("expectedUpdatedAt") && files.detail.includes("expectedUpdatedAt: item.updated_at") && files.composers.includes("expectedVersion"), "Critical edits should send optimistic concurrency guards");
 assert(files.detail.includes("WatchersButton") && files.detail.includes("WatchersDialog") && files.detail.includes("watchMutation") && files.detail.includes("Add yourself as watcher"), "Detail screen should expose inquiry watch/unwatch controls");
+assert(files.detail.includes('aria-label="Inquiry actions"') && files.detail.includes('<Button variant="outline" size="sm" aria-label="Ask assistant about this inquiry"') && files.detail.includes("<Bot size={17} />") && files.detail.includes('className="hidden sm:inline">Ask assistant</span>') && files.detail.match(/<span className="mx-0\.5 h-5 w-px bg-border" aria-hidden="true" \/>/g)?.length === 2 && files.detail.includes("grouped />"), "Inquiry actions should use a compact divided toolbar with an outlined, icon-only mobile assistant control");
+assert(files.detail.includes('grouped ? "border-border bg-card text-red-700') && files.detail.includes('grouped ? "border-border bg-card text-muted-foreground'), "Grouped inquiry actions should share the same outlined card background");
+assert(files.detail.includes('flex items-stretch justify-between gap-3') && files.detail.includes('flex min-w-0 flex-1 flex-col justify-between') && files.detail.includes('text-muted-foreground">Updated') && !files.detail.includes('sm:inline">Updated') && files.detail.indexOf('text-muted-foreground">Updated') < files.detail.indexOf('aria-label="Inquiry actions"'), "Inquiry metadata should stay stacked at every breakpoint and fill the action row from top to bottom");
 assert(files.api.includes("watchInquiry") && files.api.includes("unwatchInquiry") && files.api.includes("inquiries/${id}/watchers"), "Client API should expose watcher endpoints");
 assert(files.pipeline.includes("owner_name") && files.pipeline.includes("Unassigned"), "Inquiry queue should show owner state");
 assert(files.detail.includes("Add internal note") && files.api.includes("logCommunication"), "Detail screen should support internal note capture");
 assert(files.detail.includes("Comments & mentions") && files.detail.includes("CommentThread") && files.detail.includes("@email") && files.api.includes("addComment"), "Detail screen should support collaborative comments and mentions");
 assert(!files.detail.includes("title=\"Files & site evidence\" meta={`${files.length} ${files.length === 1 ? \"file\" : \"files\"}`} icon={<Paperclip size={17} />} defaultOpen"), "Files & site evidence should not expand automatically when opening an inquiry");
 assert(files.detail.includes("DeleteFileButton") && files.detail.includes("Delete file?") && files.detail.includes("absolute right-1.5 top-1.5"), "File evidence should expose a top-right delete control with confirmation");
-assert(files.detail.includes("action.target !== \"docs\""), "Recommended next step should not show duplicate Docs actions when Docs is already primary");
+assert(!files.detail.includes("AI summary") && !files.detail.includes("Next step") && !files.detail.includes("WorkflowGuidance"), "Inquiry detail should omit AI summary and future next-step guidance");
+assert(files.detail.includes("primary-contact-title") && !files.detail.includes("function ContactCard"), "Primary contact details should live in the inquiry record header without a duplicate sidebar card");
+assert(files.detail.includes("href={`mailto:${item.email}`}") && files.detail.includes("href={`tel:${item.phone}`}") && files.detail.includes("min-h-11"), "Primary contact email and phone should use mobile-friendly system links");
+assert(files.detail.includes("inquiryRecordTitle(item)") && files.detail.includes("locationSuffix") && files.detail.includes("endsWith(suffix.toLowerCase())"), "Inquiry record titles should remove a duplicated city/state suffix while retaining location elsewhere");
+assert(files.detail.indexOf("<RecordDetails") < files.detail.indexOf("<RequirementsPanel") && !files.detail.includes("RecentActivity"), "Overview should show Record Details above Missing Information without Recent Activity");
+assert(files.detail.includes('grid grid-cols-3 gap-1') && files.detail.includes('role="tablist"') && files.detail.includes('role="tab"') && files.detail.includes('label="Files"') && files.detail.includes("handleKeyDown") && !files.detail.includes("overflow-x-auto overscroll-x-contain"), "Inquiry navigation should keep Overview, Activity, and Files equally visible with accessible segmented-tab behavior");
+assert(files.detail.includes('icon={Pencil} label="Edit details"') && !files.detail.includes(">Edit details</Button>"), "Primary contact should expose editing through a top-right pencil control");
+assert(!files.detail.includes("function QuickAction") && !files.detail.includes('label="Add documents"') && !files.detail.includes('label="Follow up"') && !files.detail.includes('label="Generate work"'), "Inquiry header should not duplicate document, follow-up, or generation actions from the tabs");
 assert(files.detail.includes("navigate(\"assistant\", { inquiry: true })") && files.detail.includes("Ask"), "Inquiry detail should expose inquiry-scoped assistant entry");
-for (const label of ["Floor plan", "Equipment list", "Contract", "Email attachment"]) {
-  assert(files.detail.includes(label), `Detail workflow checklist should track ${label}`);
-}
 assert(files.detail.includes("photoCategoryForSelection"), "Photo uploads should honor selected source document categories");
 assert(files.docs.includes("DocumentViewer") && files.docs.includes("isPdf(file)") && files.docs.includes("downloadUrl"), "Docs screen should preview and download durable files");
 assert(files.docs.includes("navigate(\"assistant\", { inquiry: true })") && files.docs.includes("<Bot size={15} />Ask"), "Docs screen should expose inquiry-scoped assistant entry");

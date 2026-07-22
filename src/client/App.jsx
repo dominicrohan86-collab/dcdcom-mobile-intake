@@ -11,6 +11,7 @@ import { EmailScreen, ProposalScreen } from "./screens/Composers";
 import { InquiryDetailScreen, DetailLoading } from "./screens/InquiryDetail";
 import { DocsScreen, MoreScreen } from "./screens/Library";
 import { LoginScreen } from "./screens/Login";
+import { PreferencesScreen } from "./screens/Preferences";
 import { PipelineScreen } from "./screens/Queues";
 import { TodayScreen } from "./screens/Today";
 
@@ -233,14 +234,15 @@ export function App() {
   if (bootstrap.isLoading) return <><main className="grid min-h-dvh place-items-center bg-background text-sm text-muted-foreground"><span className="flex items-center gap-2"><span className="size-4 animate-spin rounded-full border-2 border-border border-t-brand" />Loading workspace...</span></main><ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} /></>;
   if (bootstrap.error) return <><main className="grid min-h-dvh place-items-center bg-background p-6"><EmptyState>Could not load the workspace: {bootstrap.error.message}</EmptyState></main><ActionAlertViewport alerts={actionAlerts} dismiss={dismissActionAlert} /></>;
 
-  const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Documents", assistant: "Assistant" };
-  const hasBack = ["add", "detail", "email", "proposal"].includes(screen) || (screen === "assistant" && Boolean(assistantScopeId));
+  const titles = { add: "Add Inquiry", detail: "Inquiry", email: "Follow-up", proposal: "Documents", assistant: "Assistant", preferences: "Preferences" };
+  const hasBack = ["add", "detail", "email", "proposal", "preferences"].includes(screen) || (screen === "assistant" && Boolean(assistantScopeId));
   let content;
 
   if (screen === "today") content = <TodayScreen openWorkflow={openWorkflow} setNotice={setNotice} />;
   else if (screen === "pipeline") content = <PipelineScreen inquiries={inquiries} open={open} setNotice={setNotice} />;
   else if (screen === "add") content = <AddInquiryScreen create={(payload) => create.mutate(payload)} busy={analyze.isPending || create.isPending} result={analysis} error={(analyze.error || create.error)?.message} setNotice={setNotice} draftScope={draftScope} />;
-  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} selectedId={selectedId} setNotice={setNotice} navigate={go} />;
+  else if (screen === "more") content = <MoreScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} setNotice={setNotice} navigate={go} />;
+  else if (screen === "preferences") content = <PreferencesScreen user={bootstrap.data.user} preferences={bootstrap.data.preferences} personalization={bootstrap.data.personalization} integrations={bootstrap.data.integrations} setNotice={setNotice} />;
   else if (screen === "assistant" && !assistantScopeId) content = <AssistantScreen user={bootstrap.data.user} setNotice={setNotice} />;
   else if (detail.isLoading || !detail.data) content = detail.error ? <EmptyState>Could not load this inquiry.</EmptyState> : <DetailLoading />;
   else if (screen === "detail") content = <InquiryDetailScreen detail={detail.data} user={bootstrap.data.user} navigate={go} openDocument={openDocument} setNotice={setNotice} onDeleted={handleInquiryDeleted} />;
@@ -335,8 +337,10 @@ function routeFromLocation() {
     "/assistant": "assistant",
     "/docs": "docs",
     "/documents": "docs",
-    "/profile": "more",
-    "/settings": "more",
+    "/more": "more",
+    "/profile": "preferences",
+    "/preferences": "preferences",
+    "/settings": "preferences",
     "/notifications": "today"
   };
   return { screen: routes[path] || "today", selectedId: null, explicit: path !== "/" };
@@ -352,7 +356,8 @@ function pathForScreen(screen, selectedId) {
   if (screen === "assistant") return "/assistant";
   if (screen === "docs" && selectedId) return `/inquiries/${encodeURIComponent(selectedId)}/documents`;
   if (screen === "docs") return "/docs";
-  if (screen === "more") return "/profile";
+  if (screen === "more") return "/more";
+  if (screen === "preferences") return "/preferences";
   return "/today";
 }
 

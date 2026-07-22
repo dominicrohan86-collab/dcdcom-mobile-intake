@@ -1004,8 +1004,7 @@ export async function createInquiryFromExtraction(env, accountId, userId, payloa
   const extraction = analysis.extraction;
   const companyId = await findOrCreateCompany(env, accountId, extraction.company, db);
   const contactId = id("ct"), siteId = id("site"), inquiryId = id("inq"), sourceId = id("src"), summaryId = id("sum");
-  const titleLocation = [extraction.site.city, extraction.site.region].filter(Boolean).join(", ");
-  const title = `${extraction.company.name}${titleLocation ? ` - ${titleLocation}` : ""}`;
+  const title = String(extraction.company.name || "New Inquiry").trim();
   const status = extraction.missingRequirements.length ? "needs_info" : "estimating";
   await db.insert(contacts).values({ id: contactId, accountId, companyId, fullName: extraction.contact.fullName, email: extraction.contact.email, phone: extraction.contact.phone, preferredChannel: extraction.contact.preferredChannel });
   await db.insert(sites).values({ id: siteId, accountId, companyId, name: extraction.site.name, city: extraction.site.city, region: extraction.site.region, country: extraction.site.country, siteType: extraction.site.siteType, accessNotes: extraction.site.accessNotes });
